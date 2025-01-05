@@ -1,0 +1,393 @@
+
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multi-modal-rag-notes-api
+
+
+Globals: # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-specification-template-anatomy-globals.html
+  Function:
+    Timeout: 180
+    MemorySize: 2048
+    Runtime: python3.11
+
+    Tracing: Active
+    # You can add LoggingConfig parameters such as the Logformat, Log Group, and SystemLogLevel or ApplicationLogLevel. Learn more here https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-loggingconfig.
+    LoggingConfig:
+      LogFormat: JSON
+    Environment:
+      Variables:
+        LOG_LEVEL: DEBUG
+        POWERTOOLS_LOGGER_SAMPLE_RATE: 0.1
+        POWERTOOLS_LOGGER_LOG_EVENT: true
+
+        POWERTOOLS_SERVICE_NAME: "notes_ai_api_service"
+        POWERTOOLS_METRICS_NAMESPACE: "notes_ai_api"
+Parameters:
+
+  DocumentTable:
+    Type: String
+    Description: "Documents Table"
+  UserTable:
+    Type: String
+    Description: "Users Table"
+  UserNotesTable:
+    Type: String
+    Description: "User Notes Table"
+
+
+
+Resources:
+  GenerateEmbeddingsFromTextFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/generate_embeddings/
+      Handler: generate_embeddings_text.lambda_handler
+      Timeout: 180
+      MemorySize: 2048
+      Runtime: python3.11
+      Policies:
+        - S3CrudPolicy:
+            BucketName: "multi-modal-rag-notes-api-apiintegrations"
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentTable
+
+        - Statement:
+            - Sid: "BedrockScopedAccess"
+              Effect: "Allow"
+              Action: "bedrock:InvokeModel"
+              Resource:
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-v2"
+                - "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1"
+
+
+      Environment:
+        Variables:
+          DOCS_TABLE: !Ref DocumentTable
+          BUCKET: !Ref DocumentBucket
+
+
+
+
+  TranscribeMediaWorkflowSfn:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/workflow.asl.json
+      DefinitionSubstitutions:
+        BucketName: !Ref DocumentBucket
+        GenerateEmbeddingsLambdaArn: !GetAtt GenerateEmbeddingsFromTextFunction.Arn
+      Role: !GetAtt TranscribeStateMachineRole.Arn
+
+  TranscribeStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TranscribePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - transcribe:StartTranscriptionJob
+                  - transcribe:GetTranscriptionJob
+                  - transcribe:ListTranscriptionJobs
+                Resource: "*"
+        - PolicyName: LambdaInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt GenerateEmbeddingsFromTextFunction.Arn
+        - PolicyName: S3CrudPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${DocumentBucket}"
+                  - !Sub "arn:aws:s3:::${DocumentBucket}/*"
+
+  NoteLambdaFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    DependsOn:
+      - LambdaLoggingPolicy
+    Properties:
+      CodeUri: ../src/
+      Handler: app.lambda_handler
+      Description: note Lambda Direct Lambda Resolver
+      Environment:
+        Variables:
+          DOCS_TABLE: !Ref DocumentTable
+          USER_TABLE: !Ref UserTable
+          USER_NOTES_TABLE: !Ref UserNotesTable
+
+
+      Policies:
+          - DynamoDBCrudPolicy:
+              TableName: !Ref UserTable
+          - DynamoDBCrudPolicy:
+              TableName: !Ref UserNotesTable
+          - S3CrudPolicy:
+              BucketName: "multi-modal-rag-notes-api-apiintegrations"
+
+          - Statement:
+              - Sid: "BedrockScopedAccess"
+                Effect: "Allow"
+                Action: "bedrock:InvokeModel"
+                Resource:
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-v2"
+                - "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1"
+
+      Tags:
+        SOLUTION: LambdaPowertoolsPython
+
+  LambdaLoggingPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: LambdaXRayPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action: [
+              "xray:PutTraceSegments",
+              "xray:PutTelemetryRecords",
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ]
+            Resource: "*"
+      Roles:
+        - !Ref AddLambdaRole
+
+  AppSyncServiceRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "appsync.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  AddLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+  InvokeLambdaResolverPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: "DirectAppSyncLambda"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action: "lambda:invokeFunction"
+            Resource:
+              - !GetAtt NoteLambdaFunction.Arn
+
+      Roles:
+        - !Ref AppSyncServiceRole
+        - !Ref AddLambdaRole
+  SQSDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600  # 14 days in seconds
+  SQSQueue:
+    Type: AWS::SQS::Queue
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      VisibilityTimeout: 180
+      MessageRetentionPeriod: 3600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt SQSDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  SQSQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref SQSQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: SecureTransportPolicy
+        Statement:
+          - Sid: AllowSecureTransportOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "SQS:*"
+            Resource: "*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+  UploadTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/upload_trigger/
+      Handler: main.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentTable
+        - S3ReadPolicy:
+            BucketName: "multi-modal-rag-notes-api-apiintegrations"
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt SQSQueue.QueueName
+      Environment:
+        Variables:
+          DOCS_TABLE: !Ref DocumentTable
+          QUEUE: !GetAtt SQSQueue.QueueName
+          BUCKET: "multi-modal-rag-notes-api-apiintegrations"
+      Events:
+        S3PdfUploadEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref DocumentBucket
+            Events:
+              - s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .pdf
+        S3AudioUploadEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref DocumentBucket
+            Events:
+              - s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .mp3
+        S3VideoUploadEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref DocumentBucket
+            Events:
+              - s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .mp4
+
+  GenerateEmbeddingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/generate_embeddings/
+      Handler: main.lambda_handler
+      Timeout: 180
+      MemorySize: 2048
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt SQSQueue.QueueName
+        - S3CrudPolicy:
+            BucketName: "multi-modal-rag-notes-api-apiintegrations"
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentTable
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt TranscribeMediaWorkflowSfn.Name
+
+        - Statement:
+            - Sid: "BedrockScopedAccess"
+              Effect: "Allow"
+              Action: "bedrock:InvokeModel"
+              Resource:
+                - "arn:aws:bedrock:*::foundation-model/anthropic.claude-v2"
+                - "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1"
+
+
+      Environment:
+        Variables:
+          DOCS_TABLE: !Ref DocumentTable
+          BUCKET: "multi-modal-rag-notes-api-apiintegrations"
+          STATE_MACHINE_ARN: !Ref TranscribeMediaWorkflowSfn
+
+      Events:
+        SQSQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SQSQueue.Arn
+            BatchSize: 5
+
+
+  DocumentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: "multi-modal-rag-notes-api-apiintegrations"
+
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+              - HEAD
+              - POST
+              - DELETE
+            AllowedOrigins:
+              - "*"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  DocumentBucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref DocumentBucket
+      PolicyDocument:
+        Id: EnforceHttpsPolicy
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnforceHttpsSid
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !Sub "arn:aws:s3:::${DocumentBucket}/*"
+              - !Sub "arn:aws:s3:::${DocumentBucket}"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+
+
+Outputs:
+  NoteLambdaFunction:
+    Description: "Notes Lambda function Arn"
+    Value: !GetAtt NoteLambdaFunction.Arn
+  AppSyncServiceRole:
+    Description: "AppSync service role"
+    Value: !GetAtt AppSyncServiceRole.Arn
+
+

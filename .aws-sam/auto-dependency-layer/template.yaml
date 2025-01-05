@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'multi-modal-rag-notes-api
+
+  '
+Resources:
+  Authentication:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: Authentication/template.yaml
+    Metadata:
+      SamResourceId: Authentication
+  DynamoDB:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: DynamoDB/template.yaml
+    Metadata:
+      SamResourceId: DynamoDB
+  ApiIntegrations:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: ApiIntegrations/template.yaml
+      Parameters:
+        DocumentTable:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBDocumentTable
+        UserTable:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBUserTable
+        UserNotesTable:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBUserNotesTable
+    Metadata:
+      SamResourceId: ApiIntegrations
+  GraphqlAPI:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: GraphqlAPI/template.yaml
+      Parameters:
+        DocumentTable:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBDocumentTable
+        UserTable:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBUserTable
+        UserNotesTable:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBUserNotesTable
+        AppSyncServiceRole:
+          Fn::GetAtt:
+          - ApiIntegrations
+          - Outputs.AppSyncServiceRole
+        NoteLambdaFunction:
+          Fn::GetAtt:
+          - ApiIntegrations
+          - Outputs.NoteLambdaFunction
+        CognitoUserPool:
+          Fn::GetAtt:
+          - Authentication
+          - Outputs.CognitoUserPool
+    Metadata:
+      SamResourceId: GraphqlAPI
+Outputs:
+  NotesAIAPI:
+    Description: Notes Graphql API
+    Value:
+      Fn::GetAtt:
+      - GraphqlAPI
+      - Outputs.NotesAIAPI

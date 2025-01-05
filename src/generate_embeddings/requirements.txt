@@ -1,0 +1,12 @@
+requests
+aws-lambda-powertools[tracer]
+aws-lambda-powertools[parser]
+boto3
+botocore
+langchain-community
+langchain
+langchain_aws
+langchain-pinecone
+shortuuid
+pypdf
+jq

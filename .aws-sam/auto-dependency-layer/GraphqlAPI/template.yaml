@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'multi-modal-rag-notes-api
+
+  '
+Parameters:
+  DocumentTable:
+    Type: String
+    Description: Documents Table
+  UserTable:
+    Type: String
+    Description: Users Table
+  UserNotesTable:
+    Type: String
+    Description: User Notes Table
+  AppSyncServiceRole:
+    Type: String
+    Description: Appsync Service Role ARN
+  NoteLambdaFunction:
+    Type: String
+    Description: Appsync notes lambda function ARN
+  CognitoUserPool:
+    Type: String
+    Description: Cognito User Pools
+Resources:
+  RoleAppSyncCloudWatch:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - sts:AssumeRole
+          Principal:
+            Service:
+            - appsync.amazonaws.com
+  NotesAIAPI:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: NotesAIAPI
+      AuthenticationType: API_KEY
+      AdditionalAuthenticationProviders:
+      - AuthenticationType: AMAZON_COGNITO_USER_POOLS
+        UserPoolConfig:
+          AwsRegion:
+            Ref: AWS::Region
+          UserPoolId:
+            Ref: CognitoUserPool
+      XrayEnabled: true
+      LogConfig:
+        CloudWatchLogsRoleArn:
+          Fn::GetAtt:
+          - RoleAppSyncCloudWatch
+          - Arn
+        ExcludeVerboseContent: false
+        FieldLogLevel: ALL
+  NotesAIApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+  NotesAIAPISchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      DefinitionS3Location: ../../../schema/schema.graphql
+  NoteFunctionDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      Name: NoteLambdaDirectResolver
+      Type: AWS_LAMBDA
+      ServiceRoleArn:
+        Ref: AppSyncServiceRole
+      LambdaConfig:
+        LambdaFunctionArn:
+          Ref: NoteLambdaFunction
+  CreateUserAccountResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Mutation
+      FieldName: createUserAccount
+      DataSourceName:
+        Fn::GetAtt:
+        - NoteFunctionDataSource
+        - Name
+  queryDocumentResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Query
+      FieldName: queryDocument
+      DataSourceName:
+        Fn::GetAtt:
+        - NoteFunctionDataSource
+        - Name
+  CreateNoteResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Mutation
+      FieldName: createNote
+      DataSourceName:
+        Fn::GetAtt:
+        - NoteFunctionDataSource
+        - Name
+  UpdateNoteResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Mutation
+      FieldName: updateNote
+      DataSourceName:
+        Fn::GetAtt:
+        - NoteFunctionDataSource
+        - Name
+  getNoteResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Query
+      FieldName: getNote
+      DataSourceName:
+        Fn::GetAtt:
+        - NoteFunctionDataSource
+        - Name
+  getNotesResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Query
+      FieldName: getAllNotes
+      DataSourceName:
+        Fn::GetAtt:
+        - NoteFunctionDataSource
+        - Name
+  enhanceNoteResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Query
+      FieldName: enhanceNote
+      DataSourceName:
+        Fn::GetAtt:
+        - NoteFunctionDataSource
+        - Name
+Outputs:
+  NotesAIAPI:
+    Value:
+      Ref: NotesAIAPI

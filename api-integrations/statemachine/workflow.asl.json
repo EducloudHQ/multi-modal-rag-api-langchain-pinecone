@@ -1,0 +1,79 @@
+{
+  "Comment": "This workflow transcribes video and audio files and then generates and saves vector embeddings to pinecone",
+  "StartAt": "StartTranscriptionJob",
+  "QueryLanguage": "JSONata",
+  "States": {
+    "StartTranscriptionJob": {
+      "Type": "Task",
+      "Arguments": {
+        "Media": {
+          "MediaFileUri": "{% $states.input.mediaFileUri %}"
+        },
+        "IdentifyLanguage": true,
+        "TranscriptionJobName": "{% $states.input.jobName %}",
+        "OutputBucketName": "${BucketName}",
+        "OutputKey": "{% $states.input.bucketOutputKey %}"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob",
+      "Next": "Wait"
+    },
+    "Wait": {
+      "Type": "Wait",
+      "Seconds": 120,
+      "Next": "GetTranscriptionJob"
+    },
+    "GetTranscriptionJob": {
+      "Type": "Task",
+      "Arguments": {
+        "TranscriptionJobName": "{% $states.input.TranscriptionJob.TranscriptionJobName %}"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:transcribe:getTranscriptionJob",
+      "Next": "Choice"
+    },
+    "Choice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Next": "Wait",
+          "Condition": "{% $TranscriptionJob.TranscriptionJobStatus = \"IN_PROGRESS\" %}"
+        }
+      ],
+      "Default": "Pass"
+    },
+ "Pass": {
+      "Type": "Pass",
+      "Next": "Lambda Invoke",
+      "Output": {
+        "Bucket": "${BucketName}",
+        "Key": "{% $states.context.Execution.Input.bucketOutputKey %}"
+      }
+    },
+    "Lambda Invoke": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Output": "{% $states.result.Payload %}",
+      "Arguments": {
+        "FunctionName": "${GenerateEmbeddingsLambdaArn}",
+        "Payload": "{% $states.input %}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}

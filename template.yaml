@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multi-modal-rag-notes-api
+
+Resources:
+  Authentication:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: auth/template.yaml
+  DynamoDB:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: db/template.yaml
+
+  ApiIntegrations:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: api-integrations/template.yaml
+      Parameters:
+        DocumentTable: !GetAtt DynamoDB.Outputs.DDBDocumentTable
+        UserTable: !GetAtt DynamoDB.Outputs.DDBUserTable
+        UserNotesTable: !GetAtt DynamoDB.Outputs.DDBUserNotesTable
+
+
+
+  GraphqlAPI:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: api/template.yaml
+      Parameters:
+        DocumentTable: !GetAtt DynamoDB.Outputs.DDBDocumentTable
+        UserTable: !GetAtt DynamoDB.Outputs.DDBUserTable
+        UserNotesTable: !GetAtt DynamoDB.Outputs.DDBUserNotesTable
+        AppSyncServiceRole: !GetAtt ApiIntegrations.Outputs.AppSyncServiceRole
+        NoteLambdaFunction: !GetAtt ApiIntegrations.Outputs.NoteLambdaFunction
+        CognitoUserPool: !GetAtt Authentication.Outputs.CognitoUserPool
+
+Outputs:
+  NotesAIAPI:
+    Description: "Notes Graphql API"
+    Value: !GetAtt GraphqlAPI.Outputs.NotesAIAPI

@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS SAM CLI Nested Stack for Auto Dependency Layer Creation
+Metadata:
+  SamCliInfo: 1.132.0
+  key: AWS SAM CLI sync command
+Outputs:
+  ApiIntegrationsGenerateEmbeddingsFunction81acc7a7DepLayer:
+    Value:
+      Ref: ApiIntegrationsGenerateEmbeddingsFunction81acc7a7DepLayer
+  ApiIntegrationsNoteLambdaFunction67402975DepLayer:
+    Value:
+      Ref: ApiIntegrationsNoteLambdaFunction67402975DepLayer
+  ApiIntegrationsUploadTriggerFunction6d34523aDepLayer:
+    Value:
+      Ref: ApiIntegrationsUploadTriggerFunction6d34523aDepLayer
+Resources:
+  ApiIntegrationsGenerateEmbeddingsFunction81acc7a7DepLayer:
+    Metadata:
+      CreatedBy: AWS SAM CLI sync command
+    Properties:
+      CompatibleRuntimes:
+      - python3.11
+      ContentUri: /Users/rosius/Documents/multi-modal-rag-notes-api/multi-modal-rag-notes-api/.aws-sam/auto-dependency-layer/ApiIntegrations/ApiIntegrationsGenerateEmbeddingsFunction81acc7a7DepLayer
+      Description: Auto created layer for dependencies of function ApiIntegrations/GenerateEmbeddingsFunction
+      LayerName: multi-modal-rag-8eafb947-ApiIntegrationsGenerat81acc7a7-DepLayer
+      RetentionPolicy: Delete
+    Type: AWS::Serverless::LayerVersion
+  ApiIntegrationsNoteLambdaFunction67402975DepLayer:
+    Metadata:
+      CreatedBy: AWS SAM CLI sync command
+    Properties:
+      CompatibleRuntimes:
+      - python3.11
+      ContentUri: /Users/rosius/Documents/multi-modal-rag-notes-api/multi-modal-rag-notes-api/.aws-sam/auto-dependency-layer/ApiIntegrations/ApiIntegrationsNoteLambdaFunction67402975DepLayer
+      Description: Auto created layer for dependencies of function ApiIntegrations/NoteLambdaFunction
+      LayerName: multi-modal-rag-8eafb947-ApiIntegrationsNoteLam67402975-DepLayer
+      RetentionPolicy: Delete
+    Type: AWS::Serverless::LayerVersion
+  ApiIntegrationsUploadTriggerFunction6d34523aDepLayer:
+    Metadata:
+      CreatedBy: AWS SAM CLI sync command
+    Properties:
+      CompatibleRuntimes:
+      - python3.11
+      ContentUri: /Users/rosius/Documents/multi-modal-rag-notes-api/multi-modal-rag-notes-api/.aws-sam/auto-dependency-layer/ApiIntegrations/ApiIntegrationsUploadTriggerFunction6d34523aDepLayer
+      Description: Auto created layer for dependencies of function ApiIntegrations/UploadTriggerFunction
+      LayerName: multi-modal-rag-8eafb947-ApiIntegrationsUploadT6d34523a-DepLayer
+      RetentionPolicy: Delete
+    Type: AWS::Serverless::LayerVersion
+Transform: AWS::Serverless-2016-10-31
