@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  multi-modal-rag-notes-api
+
+  Persistent store for users, notes and uploaded documents
+
+Parameters:
+  DocumentTableStreamARN:
+    Type: String
+    Description: "Documents Table stream arn"
+Resources:
+  # Event Bus (Target)
+  DocumentEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: DocumentsEventBus
+  # DLQ for Stream (Source)
+  PipeDLQueue:
+    Type: AWS::SQS::Queue
+  PipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - pipes.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SourcePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dynamodb:DescribeStream"
+                  - "dynamodb:GetRecords"
+                  - "dynamodb:GetShardIterator"
+                  - "dynamodb:ListStreams"
+                  - "sqs:SendMessage"
+                Resource:
+                  - !Ref DocumentTableStreamARN
+                  - !GetAtt PipeDLQueue.Arn
+        - PolicyName: TargetPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'events:PutEvents'
+                Resource: !GetAtt DocumentEventBus.Arn
+  # EventBridge Pipe
+  Pipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Name: documentdb-to-eventbridge
+      Description: "Pipe to connect Document Table stream to EventBridge event bus"
+      RoleArn: !GetAtt PipeRole.Arn
+      Source: !Ref DocumentTableStreamARN
+      SourceParameters:
+        DynamoDBStreamParameters:
+          StartingPosition: LATEST
+          BatchSize: 1
+          DeadLetterConfig:
+            Arn: !GetAtt PipeDLQueue.Arn
+      Target: !GetAtt DocumentEventBus.Arn
+      TargetParameters:
+        EventBridgeEventBusParameters:
+          DetailType: "document-status-changed"
+          Source: "notes.document"
+  # CloudWatch Log Group as a target
+  NotesCloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/events/notes-custom-log-group
+  # EventBridge Rule with two targets: CloudWatch Logs and AppSync API
+  NotesEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref DocumentEventBus
+      EventPattern:
+        # Listen to all events by this source, change this to what you want.
+        source:
+          - "notes.document"
+      Targets:
+        # First target is CloudWatch for logging
+        - Id: "Target1"
+          Arn: !GetAtt NotesCloudWatchLogGroup.Arn

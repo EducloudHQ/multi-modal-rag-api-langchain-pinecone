@@ -1,5 +1,5 @@
 import os, json
-
+import shortuuid
 import boto3
 from pathlib import Path
 from aws_lambda_powertools import Logger
@@ -23,12 +23,21 @@ logger = Logger()
 
 index_name = 'rag-with-bedrock-pinecone'
 
+def set_doc_status(user_id: str, document_id: str, status: str) -> None:
+    """
+    Update the docstatus field in DynamoDB for the specified user/document.
+    """
+    document_table.update_item(
+        Key={"userId": user_id, "documentId": document_id},
+        UpdateExpression="SET docstatus = :docstatus",
+        ExpressionAttributeValues={":docstatus": status},
+    )
 
 @logger.inject_lambda_context(log_event=True)
 def lambda_handler(event, context):
     logger.info(f"event is {event}")
     key = event["Key"]
-
+    document_id = shortuuid.uuid()
     s3.download_file(BUCKET, key, f"/tmp/{key}")
 
     data = json.loads(Path(f"/tmp/{key}").read_text())
@@ -36,7 +45,7 @@ def lambda_handler(event, context):
     transcript = data['results']['transcripts'][0]['transcript']
 
     logger.info(f"loaded data {data['results']['transcripts'][0]['transcript']}")
-
+    set_doc_status("rosius", document_id, "PROCESSING")
     # Create or recreate the Pinecone index
     index = create_or_recreate_index(
         index_name=index_name,
@@ -67,3 +76,4 @@ def lambda_handler(event, context):
         embedding=embeddings,
     )
     vector_store.add_documents(documents=docs, async_req=False)
+    set_doc_status("rosius", document_id, "COMPLETED")

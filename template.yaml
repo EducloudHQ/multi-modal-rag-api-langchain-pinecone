@@ -12,6 +12,13 @@ Resources:
     Type: AWS::Serverless::Application
     Properties:
       Location: db/template.yaml
+  EventBridge:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: eb/template.yaml
+      Parameters:
+        DocumentTableStreamARN: !GetAtt DynamoDB.Outputs.DDBDocumentTableStreamArn
+
 
   ApiIntegrations:
     Type: AWS::Serverless::Application
