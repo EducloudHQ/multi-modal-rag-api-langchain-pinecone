@@ -86,8 +86,10 @@ Resources:
   # EventBridge Rule with two targets: CloudWatch Logs and AppSync API
   NotesEventRule:
     Type: AWS::Events::Rule
+
     Properties:
       EventBusName: !Ref DocumentEventBus
+
       EventPattern:
         # Listen to all events by this source.
         source:
@@ -96,7 +98,7 @@ Resources:
         # First target is CloudWatch for logging
         - Id: "NotesRuleCloudWatchLogs"
           Arn: !GetAtt NotesEventRuleLogGroup.Arn
-          RoleArn: !GetAtt NotesEventRuleLogRole.Arn
+
 
 
   NotesEventRuleLogGroup:
@@ -129,5 +131,4 @@ Resources:
                   - logs:PutLogEvents
                   - logs:CreateLogGroup
                 Resource:
-                  - !Sub "${NotesEventRuleLogGroup.Arn}:*"
-                  - !Ref NotesEventRuleLogGroup
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${NotesEventRuleLogGroup}:*"
