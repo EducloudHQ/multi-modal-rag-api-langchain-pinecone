@@ -34,11 +34,12 @@
       "Type": "Choice",
       "Choices": [
         {
-          "Next": "Wait",
-          "Condition": "{% $TranscriptionJob.TranscriptionJobStatus = \"IN_PROGRESS\" %}"
+          "Next": "Pass",
+          "Condition": "{% $states.input.TranscriptionJob.TranscriptionJobStatus = \"COMPLETED\" %}"
+
         }
       ],
-      "Default": "Pass"
+      "Default": "Wait"
     },
  "Pass": {
       "Type": "Pass",

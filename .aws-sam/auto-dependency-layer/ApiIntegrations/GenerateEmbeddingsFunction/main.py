@@ -1,27 +1,39 @@
-import os, json
-from uuid import uuid4
+import os
+import json
 
 import boto3
-import time
 from aws_lambda_powertools import Logger
-from langchain_aws import BedrockEmbeddings
+from aws_lambda_powertools.utilities.data_classes.appsync import scalar_types_utils
+from aws_lambda_powertools.utilities.data_classes import event_source, SQSEvent
+
+# LangChain & Pinecone
 from langchain.document_loaders import PyPDFLoader
-from langchain_text_splitters import CharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_pinecone import PineconeVectorStore
-from pinecone import ServerlessSpec, Pinecone
+from langchain_aws import BedrockEmbeddings
 
-DOCUMENT_TABLE = os.environ["DOCS_TABLE"]
-pinecone_api_key = os.environ['KNOWLEDGE_BASE_ID']
-BUCKET = os.environ["BUCKET"]
+# Local utility for Pinecone index creation
+from pinecone_utils import create_or_recreate_index
 
-s3 = boto3.client("s3")
-
-ddb = boto3.resource("dynamodb")
-document_table = ddb.Table(DOCUMENT_TABLE)
 logger = Logger()
 
+# Environment variables
+DOCUMENT_TABLE = os.environ["DOCS_TABLE"]
+BUCKET = os.environ["BUCKET"]
+STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN")
+INDEX_NAME = "rag-with-bedrock-pinecone"
 
-def set_doc_status(user_id, document_id, status):
+# AWS Clients/Resources
+s3 = boto3.client("s3")
+step_function_client = boto3.client("stepfunctions")
+ddb = boto3.resource("dynamodb")
+document_table = ddb.Table(DOCUMENT_TABLE)
+
+
+def set_doc_status(user_id: str, document_id: str, status: str) -> None:
+    """
+    Update the docstatus field in DynamoDB for the specified user/document.
+    """
     document_table.update_item(
         Key={"userId": user_id, "documentId": document_id},
         UpdateExpression="SET docstatus = :docstatus",
@@ -29,64 +41,87 @@ def set_doc_status(user_id, document_id, status):
     )
 
 
-index_name = 'rag-with-bedrock-pinecone'
-
-
+@event_source(data_class=SQSEvent)
 @logger.inject_lambda_context(log_event=True)
-def lambda_handler(event, context):
-    event_body = json.loads(event["Records"][0]["body"])
-    document_id = event_body["documentId"]
+def lambda_handler(event: SQSEvent, context):
+    """
+    Processes SQS events containing information about media or document files.
+    If the file is .mp3 or .mp4, it triggers a Step Function workflow.
+    Otherwise, it downloads the PDF from S3, creates (or recreates) a Pinecone
+    index, splits the PDF into chunks, and inserts them into the vector store.
+    """
 
-    user_id = event_body["user"]
-    key = event_body["key"]
-    file_name_full = key.split("/")[-1]
+    for record in event.records:
+        logger.info(f"Received event: {record}")
+        event_body = json.loads(record.body)
+        logger.info(f"Received event body: {event_body}")
 
-    set_doc_status(user_id, document_id, "PROCESSING")
+        extension = event_body.get("extension")
+        s3_uri = event_body.get("s3_uri")
+        user_id = event_body.get("user")
+        document_id = event_body.get("documentId")
+        key = event_body.get("key")
 
-    s3.download_file(BUCKET, key, f"/tmp/{file_name_full}")
+        # If file extension is .mp3 or .mp4, start a Step Functions workflow
+        if extension in [".mp3", ".mp4"]:
+            logger.info(f"Media file detected: {extension}, starting Step Function.")
+            input_json = {
+                "jobName": scalar_types_utils.make_id(),
+                "bucketOutputKey": f"{scalar_types_utils.make_id()}.json",
+                "mediaFileUri": s3_uri,
+            }
 
-    loader = PyPDFLoader(f"/tmp/{file_name_full}")
+            # Invoke step functions workflow
+            step_function_client.start_execution(
+                stateMachineArn=STATE_MACHINE_ARN,
+                name=scalar_types_utils.make_id(),
+                input=json.dumps(input_json),
+            )
+            continue
 
-    documents = loader.load()
+        # Otherwise, treat as PDF, process and index in Pinecone
+        logger.info(f"Processing PDF document: {key}")
 
-    pc = Pinecone(api_key=pinecone_api_key)
-    spec = ServerlessSpec(cloud='aws', region='us-east-1')
+        # Update doc status to "PROCESSING"
+        set_doc_status(user_id, document_id, "PROCESSING")
 
-    if index_name in pc.list_indexes().names():
-        pc.delete_index(index_name)
-        # create a new index
-    pc.create_index(
-        index_name,
-        dimension=1536,
-        metric='dotproduct',
-        spec=spec
-    )
-    # wait for index to be initialized
-    while not pc.describe_index(index_name).status['ready']:
-        time.sleep(1)
+        # Download file from S3 into Lambda's /tmp/ directory
+        file_name_full = key.split("/")[-1]  # e.g., "doc.pdf"
+        local_path = f"/tmp/{file_name_full}"
+        s3.download_file(BUCKET, key, local_path)
 
-    embeddings = BedrockEmbeddings(
-        model_id="amazon.titan-embed-text-v1"
-    )
+        # Load and split PDF
+        loader = PyPDFLoader(local_path)
+        documents = loader.load()
+        logger.info(f"Loaded documents from {file_name_full}, total pages: {len(documents)}")
 
-    logger.info(f"loaded documents are... {documents}")
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=20,
+            length_function=len,
+            is_separator_regex=False,
+        )
+        docs = text_splitter.split_documents(documents)
+        logger.info(f"Split into {len(docs)} document chunks.")
 
-    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+        # Create or recreate the Pinecone index
+        index = create_or_recreate_index(
+            index_name=INDEX_NAME,
+            dimension=1536,  # Titan embedding dimension
+            metric="dotproduct",
+            region="us-east-1",
+            cloud_provider="aws",
+        )
 
-    docs = text_splitter.split_documents(documents)
-    uuids = [str(uuid4()) for _ in range(len(documents))]
-    index = pc.Index(name=index_name)
+        # Use LangChain's Bedrock embeddings
+        embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v1")
 
-    logger.info(f"embeddings... {documents}")
-    vector_store = PineconeVectorStore(embedding=embeddings,
-                                       index=index)
-    vector_store.add_documents(
-        documents=docs
+        # Build vector store
+        logger.info(f"Building PineconeVectorStore for {INDEX_NAME}...")
+        vector_store = PineconeVectorStore(embedding=embeddings, index=index)
+        vector_store.add_documents(documents=docs, async_req=False)
+        logger.info("Vector store updated with PDF contents.")
 
-    )
-
-    logger.info(f"more documents are... {documents}")
-
-    logger.info(f"Indexing {file_name_full}...")
-
-    set_doc_status(user_id, document_id, "READY")
+        # Update doc status to "READY"
+        set_doc_status(user_id, document_id, "READY")
+        logger.info(f"Document {document_id} for user {user_id} is READY.")

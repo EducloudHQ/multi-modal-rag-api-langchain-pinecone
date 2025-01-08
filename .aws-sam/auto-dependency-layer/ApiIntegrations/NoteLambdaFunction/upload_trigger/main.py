@@ -25,49 +25,71 @@ def lambda_handler(event: S3Event, context):
 
     logger.info(f"Received s3 event ${event}")
     bucket_name = event.bucket_name
-    record = event.records[0]
-    key = unquote_plus(record.s3.get_object.key)
-    split = key.split("/")
-    user_id = split[1]
-    file_name = split[2]
-    logger.info(f"key is {key}")
+    for record in event.records:
 
-    document_id = shortuuid.uuid()
+        logger.info(f"record is ${record}")
 
-    s3.download_file(BUCKET, key, f"/tmp/{file_name}")
+        key = unquote_plus(record.s3.get_object.key)
+        bucket_name = unquote_plus(record.s3.bucket.name)
+        root,extension = os.path.splitext(key)
 
-    with open(f"/tmp/{file_name}", "rb") as f:
-        reader = PdfReader(f)
-        pages = str(len(reader.pages))
+        # Generate the S3 URI
+        s3_uri = f"s3://{bucket_name}/{key}"
 
-    conversation_id = shortuuid.uuid()
+        logger.info(f"s3_uri is ${s3_uri}")
 
-    timestamp = datetime.utcnow()
-    timestamp_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        document_id = shortuuid.uuid()
 
-    document = {
-        "userId": user_id,
-        "documentId": document_id,
-        "filename": file_name,
-        "created": timestamp_str,
-        "pages": pages,
-        "filesize": str(event["Records"][0]["s3"]["object"]["size"]),
-        "docstatus": "UPLOADED",
-        "conversations": [],
-    }
 
-    logger.debug("this is it:")
 
-    logger.info(document)
+        logger.info(f"key is ${key}")
 
-    conversation = {"conversationId": conversation_id, "created": timestamp_str}
-    document["conversations"].append(conversation)
+        message = {
+            "documentId": document_id,
+            "key": key,
+            "extension": extension,
+            "root":root,
+            "s3_uri": s3_uri,
+            "user": "user_id",
+        }
+        sqs.send_message(QueueUrl=QUEUE, MessageBody=json.dumps(message))
 
-    document_table.put_item(Item=document)
+    ''' 
+        split = key.split("/")
+        user_id = split[1]
+        file_name = split[2]
+        logger.info(f"key is {key}")
 
-    message = {
-        "documentId": document_id,
-        "key": key,
-        "user": user_id,
-    }
-    sqs.send_message(QueueUrl=QUEUE, MessageBody=json.dumps(message))
+        document_id = shortuuid.uuid()
+
+        s3.download_file(BUCKET, key, f"/tmp/{file_name}")
+
+        with open(f"/tmp/{file_name}", "rb") as f:
+            reader = PdfReader(f)
+            pages = str(len(reader.pages))
+
+        conversation_id = shortuuid.uuid()
+
+        timestamp = datetime.utcnow()
+        timestamp_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        document = {
+            "userId": user_id,
+            "documentId": document_id,
+            "filename": file_name,
+            "created": timestamp_str,
+            "pages": pages,
+            "filesize": str(event["Records"][0]["s3"]["object"]["size"]),
+            "docstatus": "UPLOADED",
+            "conversations": [],
+        }
+
+        logger.debug("this is it:")
+
+        logger.info(document)
+
+        conversation = {"conversationId": conversation_id, "created": timestamp_str}
+        document["conversations"].append(conversation)
+
+        document_table.put_item(Item=document)
+'''

@@ -1,5 +1,7 @@
 requests
 aws-lambda-powertools[tracer]
+pypdf
 boto3
 botocore
+shortuuid
 

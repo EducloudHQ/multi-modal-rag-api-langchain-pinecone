@@ -280,13 +280,6 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
 
     .. versionchanged:: 3.0.0
         `prefix` parameter removed.
-
-    .. versionchanged:: 2.0.0
-        `__validators__`, `__preprocessors__`, and `__data_handlers__` are removed in favor of
-        `marshmallow.decorators.validates_schema`,
-        `marshmallow.decorators.pre_load` and `marshmallow.decorators.post_dump`.
-        `__accessor__` and `__error_handler__` are deprecated. Implement the
-        `handle_error` and `get_attribute` methods instead.
     """
 
     TYPE_MAPPING = {
@@ -422,7 +415,7 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
     @classmethod
     def from_dict(
         cls,
-        fields: dict[str, ma_fields.Field | type[ma_fields.Field]],
+        fields: dict[str, ma_fields.Field],
         *,
         name: str = "GeneratedSchema",
     ) -> type[Schema]:
@@ -444,11 +437,10 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
 
         .. versionadded:: 3.0.0
         """
-        attrs = fields.copy()
-        attrs["Meta"] = type(
+        Meta = type(
             "GeneratedMeta", (getattr(cls, "Meta", object),), {"register": False}
         )
-        schema_cls = type(name, (cls,), attrs)
+        schema_cls = type(name, (cls,), {**fields.copy(), "Meta": Meta})
         return schema_cls
 
     ##### Override-able methods #####
@@ -463,8 +455,6 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         :param many: Value of ``many`` on dump or load.
         :param partial: Value of ``partial`` on load.
 
-        .. versionadded:: 2.0.0
-
         .. versionchanged:: 3.0.0rc9
             Receives `many` and `partial` (on deserialization) as keyword arguments.
         """
@@ -472,8 +462,6 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
 
     def get_attribute(self, obj: typing.Any, attr: str, default: typing.Any):
         """Defines how to pull values from an object to serialize.
-
-        .. versionadded:: 2.0.0
 
         .. versionchanged:: 3.0.0a1
             Changed position of ``obj`` and ``attr``.
@@ -508,9 +496,6 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         :param obj: The object(s) to serialize.
         :param bool many: `True` if ``data`` should be serialized as a collection.
         :return: A dictionary of the serialized data
-
-        .. versionchanged:: 1.0.0
-            Renamed from ``marshal``.
         """
         if many and obj is not None:
             return [self._serialize(d, many=False) for d in obj]

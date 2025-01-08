@@ -13,7 +13,7 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_aws import BedrockEmbeddings
 
 # Local utility for Pinecone index creation
-from pinecone_utils import create_or_recreate_index
+from utilities.pinecone_utils import create_or_recreate_index
 
 logger = Logger()
 

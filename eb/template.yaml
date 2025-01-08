@@ -68,6 +68,12 @@ Resources:
           DeadLetterConfig:
             Arn: !GetAtt PipeDLQueue.Arn
       Target: !GetAtt DocumentEventBus.Arn
+      LogConfiguration:
+        CloudwatchLogsLogDestination:
+          LogGroupArn: !GetAtt NotesCloudWatchLogGroup.Arn
+        Level: TRACE
+        IncludeExecutionData:
+          - ALL
       TargetParameters:
         EventBridgeEventBusParameters:
           DetailType: "document-status-changed"
@@ -83,10 +89,45 @@ Resources:
     Properties:
       EventBusName: !Ref DocumentEventBus
       EventPattern:
-        # Listen to all events by this source, change this to what you want.
+        # Listen to all events by this source.
         source:
           - "notes.document"
       Targets:
         # First target is CloudWatch for logging
-        - Id: "Target1"
-          Arn: !GetAtt NotesCloudWatchLogGroup.Arn
+        - Id: "NotesRuleCloudWatchLogs"
+          Arn: !GetAtt NotesEventRuleLogGroup.Arn
+          RoleArn: !GetAtt NotesEventRuleLogRole.Arn
+
+
+  NotesEventRuleLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/events/rule/NotesEventRuleLogs
+      RetentionInDays: 14
+
+
+  NotesEventRuleLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: EBRuleToCWLogsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub "${NotesEventRuleLogGroup.Arn}:*"
+                  - !Ref NotesEventRuleLogGroup

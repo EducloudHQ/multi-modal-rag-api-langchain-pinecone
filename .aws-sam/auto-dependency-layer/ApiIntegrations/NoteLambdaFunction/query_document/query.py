@@ -4,82 +4,62 @@ import boto3
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler.appsync import Router
 from botocore.exceptions import ClientError
-
+from langchain_aws import ChatBedrock
 from langchain.llms.bedrock import Bedrock
 
 from langchain.embeddings import BedrockEmbeddings
-
-from langchain.vectorstores import MomentoVectorIndex
+# Local utility for Pinecone index creation
+from utilities import create_or_recreate_index
 from langchain.chains import (
     RetrievalQA
 )
+from langchain_pinecone import PineconeVectorStore
 
 
-
-s3 = boto3.client("s3")
 logger = Logger()
-
 
 logger = Logger(child=True)
 router = Router()
-def get_secret():
-    secret_name = "dev/notes_api/momento"
-    region_name = "us-east-1"
-
-    # Create a Secrets Manager client
-    session = boto3.session.Session()
-    client = session.client(
-        service_name='secretsmanager',
-        region_name=region_name
-    )
-
-    try:
-        get_secret_value_response = client.get_secret_value(
-            SecretId=secret_name
-        )
-    except ClientError as e:
-        # For a list of exceptions thrown, see
-        # https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
-        raise e
-
-    # Decrypts secret using the associated KMS key.
-    secret = get_secret_value_response['SecretString']
-    return secret
-
+bedrock = boto3.client("bedrock-runtime", "us-east-1")
+bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", "us-east-1")
+INDEX_NAME = "rag-with-bedrock-pinecone"
 
 @router.resolver(type_name="Query", field_name="queryDocument")
-def query_document(input:str):
+def query_document(input: str):
+    # Setting Model kwargs
+    model_kwargs = {
+        "max_tokens": 2048,
+        "temperature": 0.0,
+        "top_k": 250,
+        "top_p": 1,
+        "stop_sequences": ["\n\nHuman"],
+    }
 
-    bedrock_runtime = boto3.client(
-        service_name="bedrock-runtime",
-        region_name="us-east-1",
+    llm = ChatBedrock(
+        client=bedrock,
+        model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+        model_kwargs=model_kwargs,
+    )
+    index = create_or_recreate_index(
+        index_name=INDEX_NAME,
+        dimension=1536,  # Titan embedding dimension
+        metric="dotproduct",
+        region="us-east-1",
+        cloud_provider="aws",
     )
 
-    secret = get_secret()
-    momento_api_key = json.loads(secret)
-
-
-    embeddings, llm = BedrockEmbeddings(
-        model_id="amazon.titan-embed-text-v1",
-        client=bedrock_runtime,
-        region_name="us-east-1",
-    ), Bedrock(
-        model_id="anthropic.claude-v2", client=bedrock_runtime, region_name="us-east-1"
+    embeddings = BedrockEmbeddings(
+        model_id="amazon.titan-embed-text-v1"
     )
-    api_key = momento_api_key['MOMENTO_API_KEY']
-    vector_db = MomentoVectorIndex(embedding=embeddings,
-                                   client=PreviewVectorIndexClient(
-                                       VectorIndexConfigurations.Default.latest(),
-                                       credential_provider= CredentialProvider.from_string(api_key),
-                                   ),
+    vector_store = PineconeVectorStore(embedding=embeddings, index=index)
+    # Invoke Claude using the Langchain llm method
 
-                                   index_name="summary")
 
-    qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vector_db.as_retriever(),
+    qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vector_store.as_retriever(),
                                            )
 
     res = qa_chain({"query": input})
 
     logger.info(f"result is ${res}")
 
-    return {"result":res['result'] .replace("\n", "")}
+    return {"result": res['result'].replace("\n", "")}

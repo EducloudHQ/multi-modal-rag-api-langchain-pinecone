@@ -7,7 +7,7 @@ from langchain_aws import BedrockEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Local utility for Pinecone index creation
-from pinecone_utils import create_or_recreate_index
+from utilities.pinecone_utils import create_or_recreate_index
 
 DOCUMENT_TABLE = os.environ["DOCS_TABLE"]
 bedrock = boto3.client("bedrock-runtime", "us-east-1")

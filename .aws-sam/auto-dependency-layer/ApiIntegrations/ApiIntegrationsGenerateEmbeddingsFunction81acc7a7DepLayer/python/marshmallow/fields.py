@@ -1,5 +1,3 @@
-"""Field classes for various types of data."""
-
 from __future__ import annotations
 
 import collections
@@ -84,7 +82,6 @@ class Field(FieldABC):
     """Basic field from which other fields should extend. It applies no
     formatting by default, and should only be used in cases where
     data does not need to be formatted before being serialized or deserialized.
-    On error, the name of the field will be returned.
 
     :param dump_default: If set, this value will be used during serialization if the
         input value is missing. If not set, the field will be excluded from the
@@ -108,8 +105,9 @@ class Field(FieldABC):
     :param required: Raise a :exc:`ValidationError` if the field value
         is not supplied during deserialization.
     :param allow_none: Set this to `True` if `None` should be considered a valid value during
-        validation/deserialization. If ``load_default=None`` and ``allow_none`` is unset,
-        will default to ``True``. Otherwise, the default is ``False``.
+        validation/deserialization. If set to `False` (the default), `None` is considered invalid input.
+        If ``load_default`` is explicitly set to `None` and ``allow_none`` is unset,
+        `allow_none` is implicitly set to ``True``.
     :param load_only: If `True` skip this field during serialization, otherwise
         its value will be present in the serialized data.
     :param dump_only: If `True` skip this field during deserialization, otherwise
@@ -118,28 +116,12 @@ class Field(FieldABC):
     :param dict error_messages: Overrides for `Field.default_error_messages`.
     :param metadata: Extra information to be stored as field metadata.
 
-    .. versionchanged:: 2.0.0
-        Removed `error` parameter. Use ``error_messages`` instead.
-
-    .. versionchanged:: 2.0.0
-        Added `allow_none` parameter, which makes validation/deserialization of `None`
-        consistent across fields.
-
-    .. versionchanged:: 2.0.0
-        Added `load_only` and `dump_only` parameters, which allow field skipping
-        during the (de)serialization process.
-
-    .. versionchanged:: 2.0.0
-        Added `missing` parameter, which indicates the value for a field if the field
-        is not found during deserialization.
-
-    .. versionchanged:: 2.0.0
-        ``default`` value is only used if explicitly set. Otherwise, missing values
-        inputs are excluded from serialized output.
-
     .. versionchanged:: 3.0.0b8
         Add ``data_key`` parameter for the specifying the key in the input and
         output data. This parameter replaced both ``load_from`` and ``dump_to``.
+
+    .. versionchanged:: 3.13.0
+        Replace ``missing`` and ``default`` parameters with ``load_default`` and ``dump_default``.
     """
 
     # Some fields, such as Method fields and Function fields, are not expected
@@ -425,9 +407,6 @@ class Field(FieldABC):
         :param kwargs: Field-specific keyword arguments.
         :raise ValidationError: In case of formatting or validation failure.
         :return: The deserialized value.
-
-        .. versionchanged:: 2.0.0
-            Added ``attr`` and ``data`` parameters.
 
         .. versionchanged:: 3.0.0
             Added ``**kwargs`` to signature.
@@ -748,10 +727,6 @@ class List(Field):
 
     :param cls_or_instance: A field class or instance.
     :param kwargs: The same keyword arguments that :class:`Field` receives.
-
-    .. versionchanged:: 2.0.0
-        The ``allow_none`` parameter now applies to deserialization and
-        has the same semantics as the other fields.
 
     .. versionchanged:: 3.0.0rc9
         Does not serialize scalar values to single-item lists.
@@ -1464,9 +1439,6 @@ class TimeDelta(Field):
     will always be truncated to microseconds.
     For example, `1.12345` interpreted as microseconds will result in `timedelta(microseconds=1)`.
 
-    .. versionchanged:: 2.0.0
-        Always serializes to an integer value to avoid rounding errors.
-        Add `precision` parameter.
     .. versionchanged:: 3.17.0
         Allow (de)serialization to `float` through use of a new `serialization_type` parameter.
         `int` is the default to retain previous behaviour.
@@ -1949,9 +1921,6 @@ class Method(Field):
         a value The method must take a single argument ``value``, which is the
         value to deserialize.
 
-    .. versionchanged:: 2.0.0
-        Removed optional ``context`` parameter on methods. Use ``self.context`` instead.
-
     .. versionchanged:: 2.3.0
         Deprecated ``method_name`` parameter in favor of ``serialize`` and allow
         ``serialize`` to not be passed at all.
@@ -2070,8 +2039,6 @@ class Constant(Field):
     ``dump_only=True`` or ``load_only=True`` respectively.
 
     :param constant: The constant to return for the field attribute.
-
-    .. versionadded:: 2.0.0
     """
 
     _CHECK_ATTRIBUTE = False

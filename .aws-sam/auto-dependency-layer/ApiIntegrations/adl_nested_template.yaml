@@ -4,6 +4,9 @@ Metadata:
   SamCliInfo: 1.132.0
   key: AWS SAM CLI sync command
 Outputs:
+  ApiIntegrationsGenerateEmbeddingsFromTextFunctioadd5bd27DepLayer:
+    Value:
+      Ref: ApiIntegrationsGenerateEmbeddingsFromTextFunctioadd5bd27DepLayer
   ApiIntegrationsGenerateEmbeddingsFunction81acc7a7DepLayer:
     Value:
       Ref: ApiIntegrationsGenerateEmbeddingsFunction81acc7a7DepLayer
@@ -14,6 +17,17 @@ Outputs:
     Value:
       Ref: ApiIntegrationsUploadTriggerFunction6d34523aDepLayer
 Resources:
+  ApiIntegrationsGenerateEmbeddingsFromTextFunctioadd5bd27DepLayer:
+    Metadata:
+      CreatedBy: AWS SAM CLI sync command
+    Properties:
+      CompatibleRuntimes:
+      - python3.11
+      ContentUri: /Users/rosius/Documents/multi-modal-rag-notes-api/multi-modal-rag-notes-api/.aws-sam/auto-dependency-layer/ApiIntegrations/ApiIntegrationsGenerateEmbeddingsFromTextFunctioadd5bd27DepLayer
+      Description: Auto created layer for dependencies of function ApiIntegrations/GenerateEmbeddingsFromTextFunction
+      LayerName: multi-modal-rag-8eafb947-ApiIntegrationsGeneratadd5bd27-DepLayer
+      RetentionPolicy: Delete
+    Type: AWS::Serverless::LayerVersion
   ApiIntegrationsGenerateEmbeddingsFunction81acc7a7DepLayer:
     Metadata:
       CreatedBy: AWS SAM CLI sync command

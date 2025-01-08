@@ -29,6 +29,99 @@ Parameters:
     Type: String
     Description: User Notes Table
 Resources:
+  GenerateEmbeddingsFromTextFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: GenerateEmbeddingsFromTextFunction
+      Handler: generate_embeddings_text.lambda_handler
+      Timeout: 180
+      MemorySize: 2048
+      Runtime: python3.11
+      Policies:
+      - S3CrudPolicy:
+          BucketName: multi-modal-rag-notes-api-apiintegrations
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: DocumentTable
+      - Statement:
+        - Sid: BedrockScopedAccess
+          Effect: Allow
+          Action: bedrock:InvokeModel
+          Resource:
+          - arn:aws:bedrock:*::foundation-model/anthropic.claude-v2
+          - arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1
+      Environment:
+        Variables:
+          DOCS_TABLE:
+            Ref: DocumentTable
+          BUCKET:
+            Ref: DocumentBucket
+      Layers:
+      - Fn::GetAtt:
+        - AwsSamAutoDependencyLayerNestedStack
+        - Outputs.ApiIntegrationsGenerateEmbeddingsFromTextFunctioadd5bd27DepLayer
+    Metadata:
+      SamResourceId: GenerateEmbeddingsFromTextFunction
+  TranscribeMediaWorkflowSfn:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: ../../../api-integrations/statemachine/workflow.asl.json
+      DefinitionSubstitutions:
+        BucketName:
+          Ref: DocumentBucket
+        GenerateEmbeddingsLambdaArn:
+          Fn::GetAtt:
+          - GenerateEmbeddingsFromTextFunction
+          - Arn
+      Role:
+        Fn::GetAtt:
+        - TranscribeStateMachineRole
+        - Arn
+  TranscribeStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: states.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: TranscribePermissions
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - transcribe:StartTranscriptionJob
+            - transcribe:GetTranscriptionJob
+            - transcribe:ListTranscriptionJobs
+            Resource: '*'
+      - PolicyName: LambdaInvokePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::GetAtt:
+              - GenerateEmbeddingsFromTextFunction
+              - Arn
+      - PolicyName: S3CrudPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:ListBucket
+            Resource:
+            - Fn::Sub: arn:aws:s3:::${DocumentBucket}
+            - Fn::Sub: arn:aws:s3:::${DocumentBucket}/*
   NoteLambdaFunction:
     Type: AWS::Serverless::Function
     DependsOn:
@@ -186,7 +279,7 @@ Resources:
             - QueueName
           BUCKET: multi-modal-rag-notes-api-apiintegrations
       Events:
-        S3Event:
+        S3PdfUploadEvent:
           Type: S3
           Properties:
             Bucket:
@@ -198,6 +291,30 @@ Resources:
                 Rules:
                 - Name: suffix
                   Value: .pdf
+        S3AudioUploadEvent:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: DocumentBucket
+            Events:
+            - s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: suffix
+                  Value: .mp3
+        S3VideoUploadEvent:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: DocumentBucket
+            Events:
+            - s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: suffix
+                  Value: .mp4
       Layers:
       - Fn::GetAtt:
         - AwsSamAutoDependencyLayerNestedStack
@@ -222,6 +339,11 @@ Resources:
       - DynamoDBCrudPolicy:
           TableName:
             Ref: DocumentTable
+      - StepFunctionsExecutionPolicy:
+          StateMachineName:
+            Fn::GetAtt:
+            - TranscribeMediaWorkflowSfn
+            - Name
       - Statement:
         - Sid: BedrockScopedAccess
           Effect: Allow
@@ -234,6 +356,8 @@ Resources:
           DOCS_TABLE:
             Ref: DocumentTable
           BUCKET: multi-modal-rag-notes-api-apiintegrations
+          STATE_MACHINE_ARN:
+            Ref: TranscribeMediaWorkflowSfn
       Events:
         SQSQueueEvent:
           Type: SQS

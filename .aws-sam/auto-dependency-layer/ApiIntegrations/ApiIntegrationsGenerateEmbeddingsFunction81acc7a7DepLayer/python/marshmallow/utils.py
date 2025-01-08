@@ -138,7 +138,7 @@ def get_fixed_timezone(offset: int | float | dt.timedelta) -> dt.timezone:
     if isinstance(offset, dt.timedelta):
         offset = offset.total_seconds() // 60
     sign = "-" if offset < 0 else "+"
-    hhmm = "%02d%02d" % divmod(abs(offset), 60)
+    hhmm = "{:02d}{:02d}".format(*divmod(abs(offset), 60))
     name = sign + hhmm
     return dt.timezone(dt.timedelta(minutes=offset), name)
 

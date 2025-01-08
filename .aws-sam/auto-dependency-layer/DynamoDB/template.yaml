@@ -22,6 +22,8 @@ Resources:
       - AttributeName: documentId
         AttributeType: S
       BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
   UserTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Delete
@@ -59,6 +61,12 @@ Outputs:
     Description: DynamoDB Documents Table
     Value:
       Ref: DocumentTable
+  DDBDocumentTableStreamArn:
+    Description: Documents Table stream arn
+    Value:
+      Fn::GetAtt:
+      - DocumentTable
+      - StreamArn
   DDBUserTable:
     Description: DynamoDB Users Table
     Value:

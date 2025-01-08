@@ -9,7 +9,7 @@ from langchain.llms.bedrock import Bedrock
 
 from langchain.embeddings import BedrockEmbeddings
 # Local utility for Pinecone index creation
-from utilities import create_or_recreate_index
+from utilities.pinecone_utils import create_or_recreate_index
 from langchain.chains import (
     RetrievalQA
 )

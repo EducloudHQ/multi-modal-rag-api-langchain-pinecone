@@ -16,6 +16,17 @@ Resources:
       Location: DynamoDB/template.yaml
     Metadata:
       SamResourceId: DynamoDB
+  EventBridge:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: EventBridge/template.yaml
+      Parameters:
+        DocumentTableStreamARN:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBDocumentTableStreamArn
+    Metadata:
+      SamResourceId: EventBridge
   ApiIntegrations:
     Type: AWS::Serverless::Application
     Properties:

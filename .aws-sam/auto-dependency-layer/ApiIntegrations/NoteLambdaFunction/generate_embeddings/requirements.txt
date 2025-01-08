@@ -7,4 +7,6 @@ langchain-community
 langchain
 langchain_aws
 langchain-pinecone
+shortuuid
 pypdf
+jq
