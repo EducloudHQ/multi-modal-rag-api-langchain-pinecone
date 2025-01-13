@@ -12,14 +12,6 @@ Resources:
     Type: AWS::Serverless::Application
     Properties:
       Location: db/template.yaml
-  EventBridge:
-    Type: AWS::Serverless::Application
-    Properties:
-      Location: eb/template.yaml
-      Parameters:
-        DocumentTableStreamARN: !GetAtt DynamoDB.Outputs.DDBDocumentTableStreamArn
-
-
   ApiIntegrations:
     Type: AWS::Serverless::Application
     Properties:
@@ -28,7 +20,6 @@ Resources:
         DocumentTable: !GetAtt DynamoDB.Outputs.DDBDocumentTable
         UserTable: !GetAtt DynamoDB.Outputs.DDBUserTable
         UserNotesTable: !GetAtt DynamoDB.Outputs.DDBUserNotesTable
-
 
 
   GraphqlAPI:
@@ -43,7 +34,19 @@ Resources:
         NoteLambdaFunction: !GetAtt ApiIntegrations.Outputs.NoteLambdaFunction
         CognitoUserPool: !GetAtt Authentication.Outputs.CognitoUserPool
 
+  EventBridge:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: eb/template.yaml
+      Parameters:
+        DocumentTableStreamARN: !GetAtt DynamoDB.Outputs.DDBDocumentTableStreamArn
+        GraphqlAPI: !GetAtt GraphqlAPI.Outputs.NotesAIAPIArn
+        NotesAIAPIGraphqlArn: !GetAtt GraphqlAPI.Outputs.NotesAIAPIGraphqlArn
+
+
+
+
 Outputs:
   NotesAIAPI:
     Description: "Notes Graphql API"
-    Value: !GetAtt GraphqlAPI.Outputs.NotesAIAPI
+    Value: !GetAtt GraphqlAPI.Outputs.NotesAIAPIGraphqlArn

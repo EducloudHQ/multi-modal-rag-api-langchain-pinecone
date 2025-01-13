@@ -18,6 +18,10 @@ from marshmallow.base import FieldABC
 from marshmallow.exceptions import FieldInstanceResolutionError
 from marshmallow.warnings import RemovedInMarshmallow4Warning
 
+if typing.TYPE_CHECKING:
+    from marshmallow.fields import Field
+
+
 EXCLUDE = "exclude"
 INCLUDE = "include"
 RAISE = "raise"
@@ -39,7 +43,7 @@ class _Missing:
 
 
 # Singleton value that indicates that a field's value is missing from input
-# dict passed to :meth:`Schema.load`. If the field's value is not required,
+# dict passed to `Schema.load <marshmallow.Schema.load>`. If the field's value is not required,
 # it's ``default`` value is used.
 missing = _Missing()
 
@@ -111,7 +115,7 @@ def from_rfc(datestring: str) -> dt.datetime:
 def rfcformat(datetime: dt.datetime) -> str:
     """Return the RFC822-formatted representation of a datetime object.
 
-    :param datetime datetime: The datetime.
+    :param datetime: The datetime.
     """
     return format_datetime(datetime)
 
@@ -138,7 +142,7 @@ def get_fixed_timezone(offset: int | float | dt.timedelta) -> dt.timezone:
     if isinstance(offset, dt.timedelta):
         offset = offset.total_seconds() // 60
     sign = "-" if offset < 0 else "+"
-    hhmm = "%02d%02d" % divmod(abs(offset), 60)
+    hhmm = "{:02d}{:02d}".format(*divmod(abs(offset), 60))
     name = sign + hhmm
     return dt.timezone(dt.timedelta(minutes=offset), name)
 
@@ -229,7 +233,7 @@ def timestamp_ms(value: dt.datetime) -> float:
 def isoformat(datetime: dt.datetime) -> str:
     """Return the ISO8601-formatted representation of a datetime object.
 
-    :param datetime datetime: The datetime.
+    :param datetime: The datetime.
     """
     return datetime.isoformat()
 
@@ -347,10 +351,10 @@ def get_func_args(func: typing.Callable) -> list[str]:
     return _signature(func)
 
 
-def resolve_field_instance(cls_or_instance):
-    """Return a Schema instance from a Schema class or instance.
+def resolve_field_instance(cls_or_instance: type[Field] | Field) -> Field:
+    """Return a field instance from a field class or instance.
 
-    :param type|Schema cls_or_instance: Marshmallow Schema class or instance.
+    :param cls_or_instance: Field class or instance.
     """
     if isinstance(cls_or_instance, type):
         if not issubclass(cls_or_instance, FieldABC):

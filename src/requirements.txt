@@ -1,6 +1,5 @@
 requests
 aws-lambda-powertools[tracer]
-aws-lambda-powertools[parser]
 boto3
 botocore
 langchain-community

@@ -1,10 +1,12 @@
 from tqdm.autonotebook import tqdm
 
-from typing import Union, List, Tuple, Optional, Dict, Any
+import logging
+import json
+from typing import Union, List, Optional, Dict, Any, Literal
 
 from pinecone.config import ConfigBuilder
 
-from pinecone.core.openapi.data.models import SparseValues
+from pinecone.core.openapi.shared import API_VERSION
 from pinecone.core.openapi.data import ApiClient
 from pinecone.core.openapi.data.models import (
     FetchResponse,
@@ -16,16 +18,30 @@ from pinecone.core.openapi.data.models import (
     DescribeIndexStatsResponse,
     UpsertRequest,
     UpsertResponse,
-    UpdateRequest,
     Vector,
     DeleteRequest,
     UpdateRequest,
     DescribeIndexStatsRequest,
     ListResponse,
+    SparseValues,
 )
 from pinecone.core.openapi.data.api.data_plane_api import DataPlaneApi
-from ..utils import setup_openapi_client
+from ..utils import (
+    setup_openapi_client,
+    parse_non_empty_args,
+    build_plugin_setup_client,
+    validate_and_convert_errors,
+)
+from .features.bulk_import import ImportFeatureMixin
 from .vector_factory import VectorFactory
+from .query_results_aggregator import QueryResultsAggregator, QueryNamespacesResults
+
+from multiprocessing.pool import ApplyResult
+from concurrent.futures import as_completed
+
+from pinecone_plugin_interface import load_and_install as install_plugins
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Index",
@@ -46,8 +62,6 @@ __all__ = [
     "SparseValues",
 ]
 
-from ..utils.error_handling import validate_and_convert_errors
-
 _OPENAPI_ENDPOINT_PARAMS = (
     "_return_http_data_only",
     "_preload_content",
@@ -56,6 +70,7 @@ _OPENAPI_ENDPOINT_PARAMS = (
     "_check_return_type",
     "_host_index",
     "async_req",
+    "async_threadpool_executor",
 )
 
 
@@ -64,7 +79,7 @@ def parse_query_response(response: QueryResponse):
     return response
 
 
-class Index:
+class Index(ImportFeatureMixin):
     """
     A client for interacting with a Pinecone index via REST API.
     For improved performance, use the Pinecone GRPC index client.
@@ -79,21 +94,49 @@ class Index:
         openapi_config=None,
         **kwargs,
     ):
-        self._config = ConfigBuilder.build(
+        super().__init__(
             api_key=api_key,
             host=host,
+            pool_threads=pool_threads,
             additional_headers=additional_headers,
+            openapi_config=openapi_config,
             **kwargs,
         )
-        openapi_config = ConfigBuilder.build_openapi_config(self._config, openapi_config)
+
+        self.config = ConfigBuilder.build(
+            api_key=api_key, host=host, additional_headers=additional_headers, **kwargs
+        )
+        self._openapi_config = ConfigBuilder.build_openapi_config(self.config, openapi_config)
+        self._pool_threads = pool_threads
+
+        if kwargs.get("connection_pool_maxsize", None):
+            self._openapi_config.connection_pool_maxsize = kwargs.get("connection_pool_maxsize")
 
         self._vector_api = setup_openapi_client(
             api_client_klass=ApiClient,
             api_klass=DataPlaneApi,
-            config=self._config,
-            openapi_config=openapi_config,
-            pool_threads=pool_threads,
+            config=self.config,
+            openapi_config=self._openapi_config,
+            pool_threads=self._pool_threads,
+            api_version=API_VERSION,
         )
+
+        self._load_plugins()
+
+    def _load_plugins(self):
+        """@private"""
+        try:
+            # I don't expect this to ever throw, but wrapping this in a
+            # try block just in case to make sure a bad plugin doesn't
+            # halt client initialization.
+            openapi_client_builder = build_plugin_setup_client(
+                config=self.config,
+                openapi_config=self._openapi_config,
+                pool_threads=self._pool_threads,
+            )
+            install_plugins(self, openapi_client_builder)
+        except Exception as e:
+            logger.error(f"Error loading plugins in Index: {e}")
 
     def __enter__(self):
         return self
@@ -177,14 +220,12 @@ class Index:
         if not isinstance(batch_size, int) or batch_size <= 0:
             raise ValueError("batch_size must be a positive integer")
 
-        pbar = tqdm(
-            total=len(vectors),
-            disable=not show_progress,
-            desc="Upserted vectors",
-        )
+        pbar = tqdm(total=len(vectors), disable=not show_progress, desc="Upserted vectors")
         total_upserted = 0
         for i in range(0, len(vectors), batch_size):
-            batch_result = self._upsert_batch(vectors[i : i + batch_size], namespace, _check_type, **kwargs)
+            batch_result = self._upsert_batch(
+                vectors[i : i + batch_size], namespace, _check_type, **kwargs
+            )
             pbar.update(batch_result.upserted_count)
             # we can't use here pbar.n for the case show_progress=False
             total_upserted += batch_result.upserted_count
@@ -198,8 +239,10 @@ class Index:
         _check_type: bool,
         **kwargs,
     ) -> UpsertResponse:
-        args_dict = self._parse_non_empty_args([("namespace", namespace)])
-        vec_builder = lambda v: VectorFactory.build(v, check_type=_check_type)
+        args_dict = parse_non_empty_args([("namespace", namespace)])
+
+        def vec_builder(v):
+            return VectorFactory.build(v, check_type=_check_type)
 
         return self._vector_api.upsert(
             UpsertRequest(
@@ -218,16 +261,12 @@ class Index:
             yield batch
 
     def upsert_from_dataframe(
-        self,
-        df,
-        namespace: Optional[str] = None,
-        batch_size: int = 500,
-        show_progress: bool = True,
+        self, df, namespace: Optional[str] = None, batch_size: int = 500, show_progress: bool = True
     ) -> UpsertResponse:
         """Upserts a dataframe into the index.
 
         Args:
-            df: A pandas dataframe with the following columns: id, vector, sparse_values, and metadata.
+            df: A pandas dataframe with the following columns: id, values, sparse_values, and metadata.
             namespace: The namespace to upsert into.
             batch_size: The number of rows to upsert in a single batch.
             show_progress: Whether to show a progress bar.
@@ -242,11 +281,7 @@ class Index:
         if not isinstance(df, pd.DataFrame):
             raise ValueError(f"Only pandas dataframes are supported. Found: {type(df)}")
 
-        pbar = tqdm(
-            total=len(df),
-            disable=not show_progress,
-            desc="sending upsert requests",
-        )
+        pbar = tqdm(total=len(df), disable=not show_progress, desc="sending upsert requests")
         results = []
         for chunk in self._iter_dataframe(df, batch_size=batch_size):
             res = self.upsert(vectors=chunk, namespace=namespace)
@@ -304,19 +339,18 @@ class Index:
           Returns: An empty dictionary if the delete operation was successful.
         """
         _check_type = kwargs.pop("_check_type", False)
-        args_dict = self._parse_non_empty_args(
-            [
-                ("ids", ids),
-                ("delete_all", delete_all),
-                ("namespace", namespace),
-                ("filter", filter),
-            ]
+        args_dict = parse_non_empty_args(
+            [("ids", ids), ("delete_all", delete_all), ("namespace", namespace), ("filter", filter)]
         )
 
         return self._vector_api.delete(
             DeleteRequest(
                 **args_dict,
-                **{k: v for k, v in kwargs.items() if k not in _OPENAPI_ENDPOINT_PARAMS and v is not None},
+                **{
+                    k: v
+                    for k, v in kwargs.items()
+                    if k not in _OPENAPI_ENDPOINT_PARAMS and v is not None
+                },
                 _check_type=_check_type,
             ),
             **{k: v for k, v in kwargs.items() if k in _OPENAPI_ENDPOINT_PARAMS},
@@ -344,7 +378,7 @@ class Index:
 
         Returns: FetchResponse object which contains the list of Vector objects, and namespace name.
         """
-        args_dict = self._parse_non_empty_args([("namespace", namespace)])
+        args_dict = parse_non_empty_args([("namespace", namespace)])
         return self._vector_api.fetch(ids=ids, **args_dict, **kwargs)
 
     @validate_and_convert_errors
@@ -358,9 +392,11 @@ class Index:
         filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
         include_values: Optional[bool] = None,
         include_metadata: Optional[bool] = None,
-        sparse_vector: Optional[Union[SparseValues, Dict[str, Union[List[float], List[int]]]]] = None,
+        sparse_vector: Optional[
+            Union[SparseValues, Dict[str, Union[List[float], List[int]]]]
+        ] = None,
         **kwargs,
-    ) -> QueryResponse:
+    ) -> Union[QueryResponse, ApplyResult]:
         """
         The Query operation searches a namespace, using a query vector.
         It retrieves the ids of the most similar items in a namespace, along with their similarity scores.
@@ -402,6 +438,39 @@ class Index:
                  and namespace name.
         """
 
+        response = self._query(
+            *args,
+            top_k=top_k,
+            vector=vector,
+            id=id,
+            namespace=namespace,
+            filter=filter,
+            include_values=include_values,
+            include_metadata=include_metadata,
+            sparse_vector=sparse_vector,
+            **kwargs,
+        )
+
+        if kwargs.get("async_req", False) or kwargs.get("async_threadpool_executor", False):
+            return response
+        else:
+            return parse_query_response(response)
+
+    def _query(
+        self,
+        *args,
+        top_k: int,
+        vector: Optional[List[float]] = None,
+        id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        include_values: Optional[bool] = None,
+        include_metadata: Optional[bool] = None,
+        sparse_vector: Optional[
+            Union[SparseValues, Dict[str, Union[List[float], List[int]]]]
+        ] = None,
+        **kwargs,
+    ) -> QueryResponse:
         if len(args) > 0:
             raise ValueError(
                 "The argument order for `query()` has changed; please use keyword arguments instead of positional arguments. Example: index.query(vector=[0.1, 0.2, 0.3], top_k=10, namespace='my_namespace')"
@@ -413,7 +482,7 @@ class Index:
         _check_type = kwargs.pop("_check_type", False)
 
         sparse_vector = self._parse_sparse_values_arg(sparse_vector)
-        args_dict = self._parse_non_empty_args(
+        args_dict = parse_non_empty_args(
             [
                 ("vector", vector),
                 ("id", id),
@@ -426,6 +495,7 @@ class Index:
                 ("sparse_vector", sparse_vector),
             ]
         )
+
         response = self._vector_api.query(
             QueryRequest(
                 **args_dict,
@@ -434,7 +504,99 @@ class Index:
             ),
             **{k: v for k, v in kwargs.items() if k in _OPENAPI_ENDPOINT_PARAMS},
         )
-        return parse_query_response(response)
+        return response
+
+    @validate_and_convert_errors
+    def query_namespaces(
+        self,
+        vector: List[float],
+        namespaces: List[str],
+        metric: Literal["cosine", "euclidean", "dotproduct"],
+        top_k: Optional[int] = None,
+        filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        include_values: Optional[bool] = None,
+        include_metadata: Optional[bool] = None,
+        sparse_vector: Optional[
+            Union[SparseValues, Dict[str, Union[List[float], List[int]]]]
+        ] = None,
+        **kwargs,
+    ) -> QueryNamespacesResults:
+        """The query_namespaces() method is used to make a query to multiple namespaces in parallel and combine the results into one result set.
+
+        Since several asynchronous calls are made on your behalf when calling this method, you will need to tune the pool_threads and connection_pool_maxsize parameter of the Index constructor to suite your workload.
+
+        Examples:
+
+        ```python
+        from pinecone import Pinecone
+
+        pc = Pinecone(api_key="your-api-key")
+        index = pc.Index(
+            host="index-name",
+            pool_threads=32,
+            connection_pool_maxsize=32
+        )
+
+        query_vec = [0.1, 0.2, 0.3] # An embedding that matches the index dimension
+        combined_results = index.query_namespaces(
+            vector=query_vec,
+            namespaces=['ns1', 'ns2', 'ns3', 'ns4'],
+            metric="cosine",
+            top_k=10,
+            filter={'genre': {"$eq": "drama"}},
+            include_values=True,
+            include_metadata=True
+        )
+        for vec in combined_results.matches:
+            print(vec.id, vec.score)
+        print(combined_results.usage)
+        ```
+
+        Args:
+            vector (List[float]): The query vector, must be the same length as the dimension of the index being queried.
+            namespaces (List[str]): The list of namespaces to query.
+            top_k (Optional[int], optional): The number of results you would like to request from each namespace. Defaults to 10.
+            metric (str): Must be one of 'cosine', 'euclidean', 'dotproduct'. This is needed in order to merge results across namespaces, since the interpretation of score depends on the index metric type.
+            filter (Optional[Dict[str, Union[str, float, int, bool, List, dict]]], optional): Pass an optional filter to filter results based on metadata. Defaults to None.
+            include_values (Optional[bool], optional): Boolean field indicating whether vector values should be included with results. Defaults to None.
+            include_metadata (Optional[bool], optional): Boolean field indicating whether vector metadata should be included with results. Defaults to None.
+            sparse_vector (Optional[ Union[SparseValues, Dict[str, Union[List[float], List[int]]]] ], optional): If you are working with a dotproduct index, you can pass a sparse vector as part of your hybrid search. Defaults to None.
+
+        Returns:
+            QueryNamespacesResults: A QueryNamespacesResults object containing the combined results from all namespaces, as well as the combined usage cost in read units.
+        """
+        if namespaces is None or len(namespaces) == 0:
+            raise ValueError("At least one namespace must be specified")
+        if len(vector) == 0:
+            raise ValueError("Query vector must not be empty")
+
+        overall_topk = top_k if top_k is not None else 10
+        aggregator = QueryResultsAggregator(top_k=overall_topk, metric=metric)
+
+        target_namespaces = set(namespaces)  # dedup namespaces
+        async_futures = [
+            self.query(
+                vector=vector,
+                namespace=ns,
+                top_k=overall_topk,
+                filter=filter,
+                include_values=include_values,
+                include_metadata=include_metadata,
+                sparse_vector=sparse_vector,
+                async_threadpool_executor=True,
+                _preload_content=False,
+                **kwargs,
+            )
+            for ns in target_namespaces
+        ]
+
+        for result in as_completed(async_futures):
+            raw_result = result.result()
+            response = json.loads(raw_result.data.decode("utf-8"))
+            aggregator.add_results(response)
+
+        final_results = aggregator.get_results()
+        return final_results
 
     @validate_and_convert_errors
     def update(
@@ -442,13 +604,12 @@ class Index:
         id: str,
         values: Optional[List[float]] = None,
         set_metadata: Optional[
-            Dict[
-                str,
-                Union[str, float, int, bool, List[int], List[float], List[str]],
-            ]
+            Dict[str, Union[str, float, int, bool, List[int], List[float], List[str]]]
         ] = None,
         namespace: Optional[str] = None,
-        sparse_values: Optional[Union[SparseValues, Dict[str, Union[List[float], List[int]]]]] = None,
+        sparse_values: Optional[
+            Union[SparseValues, Dict[str, Union[List[float], List[int]]]]
+        ] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -484,7 +645,7 @@ class Index:
         """
         _check_type = kwargs.pop("_check_type", False)
         sparse_values = self._parse_sparse_values_arg(sparse_values)
-        args_dict = self._parse_non_empty_args(
+        args_dict = parse_non_empty_args(
             [
                 ("values", values),
                 ("set_metadata", set_metadata),
@@ -504,9 +665,7 @@ class Index:
 
     @validate_and_convert_errors
     def describe_index_stats(
-        self,
-        filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
-        **kwargs,
+        self, filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None, **kwargs
     ) -> DescribeIndexStatsResponse:
         """
         The DescribeIndexStats operation returns statistics about the index's contents.
@@ -526,7 +685,7 @@ class Index:
         Returns: DescribeIndexStatsResponse object which contains stats about the index.
         """
         _check_type = kwargs.pop("_check_type", False)
-        args_dict = self._parse_non_empty_args([("filter", filter)])
+        args_dict = parse_non_empty_args([("filter", filter)])
 
         return self._vector_api.describe_index_stats(
             DescribeIndexStatsRequest(
@@ -571,7 +730,7 @@ class Index:
 
         Returns: ListResponse object which contains the list of ids, the namespace name, pagination information, and usage showing the number of read_units consumed.
         """
-        args_dict = self._parse_non_empty_args(
+        args_dict = parse_non_empty_args(
             [
                 ("prefix", prefix),
                 ("limit", limit),
@@ -615,12 +774,8 @@ class Index:
                 done = True
 
     @staticmethod
-    def _parse_non_empty_args(args: List[Tuple[str, Any]]) -> Dict[str, Any]:
-        return {arg_name: val for arg_name, val in args if val is not None}
-
-    @staticmethod
     def _parse_sparse_values_arg(
-        sparse_values: Optional[Union[SparseValues, Dict[str, Union[List[float], List[int]]]]]
+        sparse_values: Optional[Union[SparseValues, Dict[str, Union[List[float], List[int]]]]],
     ) -> Optional[SparseValues]:
         if sparse_values is None:
             return None
@@ -628,7 +783,11 @@ class Index:
         if isinstance(sparse_values, SparseValues):
             return sparse_values
 
-        if not isinstance(sparse_values, dict) or "indices" not in sparse_values or "values" not in sparse_values:
+        if (
+            not isinstance(sparse_values, dict)
+            or "indices" not in sparse_values
+            or "values" not in sparse_values
+        ):
             raise ValueError(
                 "Invalid sparse values argument. Expected a dict of: {'indices': List[int], 'values': List[float]}."
                 f"Received: {sparse_values}"

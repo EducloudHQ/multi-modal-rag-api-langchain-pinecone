@@ -3,7 +3,8 @@ from aws_lambda_powertools.logging import correlation_paths
 from aws_lambda_powertools.event_handler import AppSyncResolver
 from user import user_router
 from notes import notes_router
-from query_document import query
+from notes import query
+
 
 
 tracer = Tracer(service="lambda_function")

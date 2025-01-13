@@ -14,7 +14,7 @@ from collections.abc import Mapping as _Mapping
 from enum import Enum as EnumType
 
 from marshmallow import class_registry, types, utils, validate
-from marshmallow.base import FieldABC, SchemaABC
+from marshmallow.base import FieldABC
 from marshmallow.exceptions import (
     FieldInstanceResolutionError,
     StringNotCollectionError,
@@ -29,10 +29,13 @@ from marshmallow.utils import (
     missing as missing_,
 )
 from marshmallow.validate import And, Length
-from marshmallow.warnings import RemovedInMarshmallow4Warning
+from marshmallow.warnings import (
+    ChangedInMarshmallow4Warning,
+    RemovedInMarshmallow4Warning,
+)
 
 if typing.TYPE_CHECKING:
-    from marshmallow.schema import SchemaMeta
+    from marshmallow.schema import Schema, SchemaMeta
 
 
 __all__ = [
@@ -74,8 +77,6 @@ __all__ = [
     "Constant",
     "Pluck",
 ]
-
-_T = typing.TypeVar("_T")
 
 
 class Field(FieldABC):
@@ -132,7 +133,7 @@ class Field(FieldABC):
     #: Default error messages for various kinds of errors. The keys in this dictionary
     #: are passed to `Field.make_error`. The values are error messages passed to
     #: :exc:`marshmallow.exceptions.ValidationError`.
-    default_error_messages = {
+    default_error_messages: dict[str, str] = {
         "required": "Missing data for required field.",
         "null": "Field may not be null.",
         "validator_failed": "Invalid value.",
@@ -160,6 +161,13 @@ class Field(FieldABC):
         metadata: typing.Mapping[str, typing.Any] | None = None,
         **additional_metadata,
     ) -> None:
+        if self.__class__ is Field:
+            warnings.warn(
+                "`Field` should not be instantiated. Use `fields.Raw` or  "
+                "another field subclass instead.",
+                ChangedInMarshmallow4Warning,
+                stacklevel=2,
+            )
         # handle deprecated `default` and `missing` parameters
         if default is not missing_:
             warnings.warn(
@@ -218,11 +226,15 @@ class Field(FieldABC):
             )
 
         # Collect default error message from self and parent classes
-        messages = {}  # type: dict[str, str]
+        messages: dict[str, str] = {}
         for cls in reversed(self.__class__.__mro__):
             messages.update(getattr(cls, "default_error_messages", {}))
         messages.update(error_messages or {})
         self.error_messages = messages
+
+        self.parent: Field | Schema | None = None
+        self.name: str | None = None
+        self.root: Schema | None = None
 
     def __repr__(self) -> str:
         return (
@@ -237,7 +249,15 @@ class Field(FieldABC):
     def __deepcopy__(self, memo):
         return copy.copy(self)
 
-    def get_value(self, obj, attr, accessor=None, default=missing_):
+    def get_value(
+        self,
+        obj: typing.Any,
+        attr: str,
+        accessor: (
+            typing.Callable[[typing.Any, str, typing.Any], typing.Any] | None
+        ) = None,
+        default: typing.Any = missing_,
+    ):
         """Return the value for a given key from an object.
 
         :param object obj: The object to get the value from.
@@ -249,14 +269,14 @@ class Field(FieldABC):
         check_key = attr if self.attribute is None else self.attribute
         return accessor_func(obj, check_key, default)
 
-    def _validate(self, value):
+    def _validate(self, value: typing.Any):
         """Perform validation on ``value``. Raise a :exc:`ValidationError` if validation
         does not succeed.
         """
         self._validate_all(value)
 
     @property
-    def _validate_all(self):
+    def _validate_all(self) -> typing.Callable[[typing.Any], None]:
         return And(*self.validators, error=self.error_messages["validator_failed"])
 
     def make_error(self, key: str, **kwargs) -> ValidationError:
@@ -290,7 +310,7 @@ class Field(FieldABC):
         )
         raise self.make_error(key=key, **kwargs)
 
-    def _validate_missing(self, value):
+    def _validate_missing(self, value: typing.Any) -> None:
         """Validate missing values. Raise a :exc:`ValidationError` if
         `value` should be considered missing.
         """
@@ -338,7 +358,7 @@ class Field(FieldABC):
 
         :param value: The value to deserialize.
         :param attr: The attribute/key in `data` to deserialize.
-        :param data: The raw input data passed to `Schema.load`.
+        :param data: The raw input data passed to `Schema.load <marshmallow.Schema.load>`.
         :param kwargs: Field-specific keyword arguments.
         :raise ValidationError: If an invalid value is passed or if a required value
             is missing.
@@ -357,9 +377,9 @@ class Field(FieldABC):
 
     # Methods for concrete classes to override.
 
-    def _bind_to_schema(self, field_name, schema):
+    def _bind_to_schema(self, field_name: str, schema: Schema | Field) -> None:
         """Update field with values from its parent schema. Called by
-        :meth:`Schema._bind_field <marshmallow.Schema._bind_field>`.
+        `Schema._bind_field <marshmallow.Schema._bind_field>`.
 
         :param str field_name: Field name set in schema.
         :param Schema|Field schema: Parent object.
@@ -372,7 +392,7 @@ class Field(FieldABC):
 
     def _serialize(
         self, value: typing.Any, attr: str | None, obj: typing.Any, **kwargs
-    ):
+    ) -> typing.Any:
         """Serializes ``value`` to a basic Python datatype. Noop by default.
         Concrete :class:`Field` classes should implement this method.
 
@@ -398,12 +418,12 @@ class Field(FieldABC):
         attr: str | None,
         data: typing.Mapping[str, typing.Any] | None,
         **kwargs,
-    ):
+    ) -> typing.Any:
         """Deserialize value. Concrete :class:`Field` classes should implement this method.
 
         :param value: The value to be deserialized.
         :param attr: The attribute/key in `data` to be deserialized.
-        :param data: The raw input data passed to the `Schema.load`.
+        :param data: The raw input data passed to the `Schema.load <marshmallow.Schema.load>`.
         :param kwargs: Field-specific keyword arguments.
         :raise ValidationError: In case of formatting or validation failure.
         :return: The deserialized value.
@@ -416,9 +436,11 @@ class Field(FieldABC):
     # Properties
 
     @property
-    def context(self):
-        """The context dictionary for the parent :class:`Schema`."""
-        return self.parent.context
+    def context(self) -> dict | None:
+        """The context dictionary for the parent `Schema <marshmallow.Schema>`."""
+        if self.parent:
+            return self.parent.context
+        return None
 
     # the default and missing properties are provided for compatibility and
     # emit warnings when they are accessed and set
@@ -502,8 +524,9 @@ class Nested(Field):
         # No
         author = fields.Nested(UserSchema(), only=("id", "name"))
 
-    :param nested: `Schema` instance, class, class name (string), dictionary, or callable that
-        returns a `Schema` or dictionary. Dictionaries are converted with `Schema.from_dict`.
+    :param nested: `Schema <marshmallow.Schema>` instance, class, class name (string), dictionary, or callable that
+        returns a `Schema <marshmallow.Schema>` or dictionary.
+        Dictionaries are converted with `Schema.from_dict <marshmallow.Schema.from_dict>`.
     :param exclude: A list or tuple of fields to exclude.
     :param only: A list or tuple of fields to marshal. If `None`, all fields are marshalled.
         This parameter takes precedence over ``exclude``.
@@ -519,13 +542,11 @@ class Nested(Field):
     def __init__(
         self,
         nested: (
-            SchemaABC
+            Schema
             | SchemaMeta
             | str
-            | dict[str, Field | type[Field]]
-            | typing.Callable[
-                [], SchemaABC | SchemaMeta | dict[str, Field | type[Field]]
-            ]
+            | dict[str, Field]
+            | typing.Callable[[], Schema | SchemaMeta | dict[str, Field]]
         ),
         *,
         dump_default: typing.Any = missing_,
@@ -555,15 +576,15 @@ class Nested(Field):
         self.exclude = exclude
         self.many = many
         self.unknown = unknown
-        self._schema = None  # Cached Schema instance
+        self._schema: Schema | None = None  # Cached Schema instance
         super().__init__(default=default, dump_default=dump_default, **kwargs)
 
     @property
-    def schema(self):
-        """The nested Schema object.
+    def schema(self) -> Schema:
+        """The nested `Schema <marshmallow.Schema>` object.
 
         .. versionchanged:: 1.0.0
-            Renamed from `serializer` to `schema`.
+            Renamed from ``serializer`` to ``schema``.
         """
         if not self._schema:
             # Inherit context from parent.
@@ -571,18 +592,18 @@ class Nested(Field):
             if callable(self.nested) and not isinstance(self.nested, type):
                 nested = self.nested()
             else:
-                nested = self.nested
-            if isinstance(nested, dict):
-                # defer the import of `marshmallow.schema` to avoid circular imports
-                from marshmallow.schema import Schema
+                nested = typing.cast("Schema", self.nested)
+            # defer the import of `marshmallow.schema` to avoid circular imports
+            from marshmallow.schema import Schema
 
+            if isinstance(nested, dict):
                 nested = Schema.from_dict(nested)
 
-            if isinstance(nested, SchemaABC):
+            if isinstance(nested, Schema):
                 self._schema = copy.copy(nested)
                 self._schema.context.update(context)
                 # Respect only and exclude passed from parent and re-initialize fields
-                set_class = self._schema.set_class
+                set_class = typing.cast(type[set], self._schema.set_class)
                 if self.only is not None:
                     if self._schema.only is not None:
                         original = self._schema.only
@@ -594,17 +615,17 @@ class Nested(Field):
                     self._schema.exclude = set_class(self.exclude) | set_class(original)
                 self._schema._init_fields()
             else:
-                if isinstance(nested, type) and issubclass(nested, SchemaABC):
-                    schema_class = nested
+                if isinstance(nested, type) and issubclass(nested, Schema):
+                    schema_class: type[Schema] = nested
                 elif not isinstance(nested, (str, bytes)):
                     raise ValueError(
                         "`Nested` fields must be passed a "
                         f"`Schema`, not {nested.__class__}."
                     )
                 elif nested == "self":
-                    schema_class = self.root.__class__
+                    schema_class = typing.cast(Schema, self.root).__class__
                 else:
-                    schema_class = class_registry.get_class(nested)
+                    schema_class = class_registry.get_class(nested, all=False)
                 self._schema = schema_class(
                     many=self.many,
                     only=self.only,
@@ -632,12 +653,14 @@ class Nested(Field):
         many = schema.many or self.many
         return schema.dump(nested_obj, many=many)
 
-    def _test_collection(self, value):
+    def _test_collection(self, value: typing.Any) -> None:
         many = self.schema.many or self.many
         if many and not utils.is_collection(value):
             raise self.make_error("type", input=value, type=value.__class__.__name__)
 
-    def _load(self, value, data, partial=None):
+    def _load(
+        self, value: typing.Any, partial: bool | types.StrSequenceOrSet | None = None
+    ):
         try:
             valid_data = self.schema.load(value, unknown=self.unknown, partial=partial)
         except ValidationError as error:
@@ -646,17 +669,24 @@ class Nested(Field):
             ) from error
         return valid_data
 
-    def _deserialize(self, value, attr, data, partial=None, **kwargs):
+    def _deserialize(
+        self,
+        value: typing.Any,
+        attr: str | None,
+        data: typing.Mapping[str, typing.Any] | None = None,
+        partial: bool | types.StrSequenceOrSet | None = None,
+        **kwargs,
+    ) -> typing.Any:
         """Same as :meth:`Field._deserialize` with additional ``partial`` argument.
 
-        :param bool|tuple partial: For nested schemas, the ``partial``
-            parameter passed to `Schema.load`.
+        :param partial: For nested schemas, the ``partial``
+            parameter passed to `marshmallow.Schema.load`.
 
         .. versionchanged:: 3.0.0
             Add ``partial`` parameter.
         """
         self._test_collection(value)
-        return self._load(value, data, partial=partial)
+        return self._load(value, partial=partial)
 
 
 class Pluck(Nested):
@@ -681,14 +711,14 @@ class Pluck(Nested):
         dumped = AlbumSchema().dump(loaded)  # => {'artist': 42}
 
     :param Schema nested: The Schema class or class name (string)
-        to nest, or ``"self"`` to nest the :class:`Schema` within itself.
+        to nest, or ``"self"`` to nest the `Schema <marshmallow.Schema>` within itself.
     :param str field_name: The key to pluck a value from.
     :param kwargs: The same keyword arguments that :class:`Nested` receives.
     """
 
     def __init__(
         self,
-        nested: SchemaABC | SchemaMeta | str | typing.Callable[[], SchemaABC],
+        nested: Schema | SchemaMeta | str | typing.Callable[[], Schema],
         field_name: str,
         **kwargs,
     ):
@@ -696,7 +726,7 @@ class Pluck(Nested):
         self.field_name = field_name
 
     @property
-    def _field_data_key(self):
+    def _field_data_key(self) -> str:
         only_field = self.schema.fields[self.field_name]
         return only_field.data_key or self.field_name
 
@@ -714,7 +744,7 @@ class Pluck(Nested):
             value = [{self._field_data_key: v} for v in value]
         else:
             value = {self._field_data_key: value}
-        return self._load(value, data, partial=partial)
+        return self._load(value, partial=partial)
 
 
 class List(Field):
@@ -748,7 +778,7 @@ class List(Field):
             self.only = self.inner.only
             self.exclude = self.inner.exclude
 
-    def _bind_to_schema(self, field_name, schema):
+    def _bind_to_schema(self, field_name: str, schema: Schema | Field) -> None:
         super()._bind_to_schema(field_name, schema)
         self.inner = copy.deepcopy(self.inner)
         self.inner._bind_to_schema(field_name, self)
@@ -792,7 +822,7 @@ class Tuple(Field):
         `typing.NamedTuple`, using a Schema within a Nested field for them is
         more appropriate than using a `Tuple` field.
 
-    :param Iterable[Field] tuple_fields: An iterable of field classes or
+    :param tuple_fields: An iterable of field classes or
         instances.
     :param kwargs: The same keyword arguments that :class:`Field` receives.
 
@@ -802,7 +832,7 @@ class Tuple(Field):
     #: Default error messages.
     default_error_messages = {"invalid": "Not a valid tuple."}
 
-    def __init__(self, tuple_fields, *args, **kwargs):
+    def __init__(self, tuple_fields: typing.Iterable[Field], *args, **kwargs):
         super().__init__(*args, **kwargs)
         if not utils.is_collection(tuple_fields):
             raise ValueError(
@@ -822,7 +852,7 @@ class Tuple(Field):
 
         self.validate_length = Length(equal=len(self.tuple_fields))
 
-    def _bind_to_schema(self, field_name, schema):
+    def _bind_to_schema(self, field_name: str, schema: Schema | Field) -> None:
         super()._bind_to_schema(field_name, schema)
         new_tuple_fields = []
         for field in self.tuple_fields:
@@ -912,14 +942,17 @@ class UUID(String):
         return self._validated(value)
 
 
-class Number(Field):
+_NumType = typing.TypeVar("_NumType")
+
+
+class Number(Field, typing.Generic[_NumType]):
     """Base class for number fields.
 
     :param bool as_string: If `True`, format the serialized value as a string.
     :param kwargs: The same keyword arguments that :class:`Field` receives.
     """
 
-    num_type = float  # type: typing.Type
+    num_type: type = float
 
     #: Default error messages.
     default_error_messages = {
@@ -928,17 +961,21 @@ class Number(Field):
     }
 
     def __init__(self, *, as_string: bool = False, **kwargs):
+        if self.__class__ is Number:
+            warnings.warn(
+                "`Number` field should not be instantiated. Use `Integer`, `Float`, or `Decimal` instead.",
+                ChangedInMarshmallow4Warning,
+                stacklevel=2,
+            )
         self.as_string = as_string
         super().__init__(**kwargs)
 
-    def _format_num(self, value) -> typing.Any:
+    def _format_num(self, value) -> _NumType:
         """Return the number value for value, given this field's `num_type`."""
         return self.num_type(value)
 
-    def _validated(self, value) -> _T | None:
+    def _validated(self, value: typing.Any) -> _NumType:
         """Format the value or raise a :exc:`ValidationError` if an error occurs."""
-        if value is None:
-            return None
         # (value is True or value is False) is ~5x faster than isinstance(value, bool)
         if value is True or value is False:
             raise self.make_error("invalid", input=value)
@@ -949,21 +986,21 @@ class Number(Field):
         except OverflowError as error:
             raise self.make_error("too_large", input=value) from error
 
-    def _to_string(self, value) -> str:
+    def _to_string(self, value: _NumType) -> str:
         return str(value)
 
-    def _serialize(self, value, attr, obj, **kwargs) -> str | _T | None:
+    def _serialize(self, value, attr, obj, **kwargs) -> str | _NumType | None:
         """Return a string if `self.as_string=True`, otherwise return this field's `num_type`."""
         if value is None:
             return None
-        ret = self._format_num(value)  # type: _T
+        ret: _NumType = self._format_num(value)
         return self._to_string(ret) if self.as_string else ret
 
-    def _deserialize(self, value, attr, data, **kwargs) -> _T | None:
+    def _deserialize(self, value, attr, data, **kwargs) -> _NumType | None:
         return self._validated(value)
 
 
-class Integer(Number):
+class Integer(Number[int]):
     """An integer field.
 
     :param strict: If `True`, only integer types are valid.
@@ -981,13 +1018,13 @@ class Integer(Number):
         super().__init__(**kwargs)
 
     # override Number
-    def _validated(self, value):
+    def _validated(self, value: typing.Any) -> int:
         if self.strict and not isinstance(value, numbers.Integral):
             raise self.make_error("invalid", input=value)
         return super()._validated(value)
 
 
-class Float(Number):
+class Float(Number[float]):
     """A double as an IEEE-754 double precision string.
 
     :param bool allow_nan: If `True`, `NaN`, `Infinity` and `-Infinity` are allowed,
@@ -1007,7 +1044,7 @@ class Float(Number):
         self.allow_nan = allow_nan
         super().__init__(as_string=as_string, **kwargs)
 
-    def _validated(self, value):
+    def _validated(self, value: typing.Any) -> float:
         num = super()._validated(value)
         if self.allow_nan is False:
             if math.isnan(num) or num == float("inf") or num == float("-inf"):
@@ -1015,7 +1052,7 @@ class Float(Number):
         return num
 
 
-class Decimal(Number):
+class Decimal(Number[decimal.Decimal]):
     """A field that (de)serializes to the Python ``decimal.Decimal`` type.
     It's safe to use when dealing with money values, percentages, ratios
     or other numbers where precision is critical.
@@ -1086,7 +1123,7 @@ class Decimal(Number):
         return num
 
     # override Number
-    def _validated(self, value):
+    def _validated(self, value: typing.Any) -> decimal.Decimal:
         try:
             num = super()._validated(value)
         except decimal.InvalidOperation as error:
@@ -1096,7 +1133,7 @@ class Decimal(Number):
         return num
 
     # override Number
-    def _to_string(self, value):
+    def _to_string(self, value: decimal.Decimal) -> str:
         return format(value, "f")
 
 
@@ -1170,7 +1207,9 @@ class Boolean(Field):
         if falsy is not None:
             self.falsy = set(falsy)
 
-    def _serialize(self, value, attr, obj, **kwargs):
+    def _serialize(
+        self, value: typing.Any, attr: str | None, obj: typing.Any, **kwargs
+    ):
         if value is None:
             return None
 
@@ -1213,23 +1252,23 @@ class DateTime(Field):
         Add timestamp as a format.
     """
 
-    SERIALIZATION_FUNCS = {
+    SERIALIZATION_FUNCS: dict[str, typing.Callable[[typing.Any], str | float]] = {
         "iso": utils.isoformat,
         "iso8601": utils.isoformat,
         "rfc": utils.rfcformat,
         "rfc822": utils.rfcformat,
         "timestamp": utils.timestamp,
         "timestamp_ms": utils.timestamp_ms,
-    }  # type: dict[str, typing.Callable[[typing.Any], str | float]]
+    }
 
-    DESERIALIZATION_FUNCS = {
+    DESERIALIZATION_FUNCS: dict[str, typing.Callable[[str], typing.Any]] = {
         "iso": utils.from_iso_datetime,
         "iso8601": utils.from_iso_datetime,
         "rfc": utils.from_rfc,
         "rfc822": utils.from_rfc,
         "timestamp": utils.from_timestamp,
         "timestamp_ms": utils.from_timestamp_ms,
-    }  # type: dict[str, typing.Callable[[str], typing.Any]]
+    }
 
     DEFAULT_FORMAT = "iso"
 
@@ -1540,6 +1579,12 @@ class Mapping(Field):
         values: Field | type[Field] | None = None,
         **kwargs,
     ):
+        if self.__class__ is Mapping:
+            warnings.warn(
+                "`Mapping` field should not be instantiated. Use `Dict` instead.",
+                ChangedInMarshmallow4Warning,
+                stacklevel=2,
+            )
         super().__init__(**kwargs)
         if keys is None:
             self.key_field = None
@@ -1732,7 +1777,7 @@ class IP(Field):
 
     default_error_messages = {"invalid_ip": "Not a valid IP address."}
 
-    DESERIALIZATION_CLASS = None  # type: typing.Optional[typing.Type]
+    DESERIALIZATION_CLASS: type | None = None
 
     def __init__(self, *args, exploded=False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1796,7 +1841,7 @@ class IPInterface(Field):
 
     default_error_messages = {"invalid_ip_interface": "Not a valid IP interface."}
 
-    DESERIALIZATION_CLASS = None  # type: typing.Optional[typing.Type]
+    DESERIALIZATION_CLASS: type | None = None
 
     def __init__(self, *args, exploded: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1846,7 +1891,7 @@ class Enum(Field):
         or Field class or instance to use to (de)serialize by value. Defaults to False.
 
     If `by_value` is `False` (default), enum members are (de)serialized by symbol (name).
-    If it is `True`, they are (de)serialized by value using :class:`Field`.
+    If it is `True`, they are (de)serialized by value using :class:`Raw`.
     If it is a field instance or class, they are (de)serialized by value using this field.
 
     .. versionadded:: 3.18.0
@@ -1876,7 +1921,7 @@ class Enum(Field):
         # Serialization by value
         else:
             if by_value is True:
-                self.field = Field()
+                self.field = Raw()
             else:
                 try:
                     self.field = resolve_field_instance(by_value)
@@ -1912,7 +1957,7 @@ class Enum(Field):
 
 
 class Method(Field):
-    """A field that takes the value returned by a `Schema` method.
+    """A field that takes the value returned by a `Schema <marshmallow.Schema>` method.
 
     :param str serialize: The name of the Schema method from which
         to retrieve the value. The method must take an argument ``obj``

@@ -9,12 +9,24 @@ Parameters:
   DocumentTableStreamARN:
     Type: String
     Description: "Documents Table stream arn"
+  GraphqlAPI:
+    Type: String
+    Description: "Graphql API arn"
+  NotesAIAPIGraphqlArn:
+    Type: String
+    Description: "Graphql endpoint API arn"
+
 Resources:
   # Event Bus (Target)
   DocumentEventBus:
     Type: AWS::Events::EventBus
     Properties:
       Name: DocumentsEventBus
+  # DLQ for the AppSync integration
+  TargetDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: eventbridge-appsync-dlq
   # DLQ for Stream (Source)
   PipeDLQueue:
     Type: AWS::SQS::Queue
@@ -94,10 +106,32 @@ Resources:
         # Listen to all events by this source.
         source:
           - "notes.document"
+        detail-type:
+          - "document-status-changed"
+
       Targets:
         # First target is CloudWatch for logging
         - Id: "NotesRuleCloudWatchLogs"
           Arn: !GetAtt NotesEventRuleLogGroup.Arn
+        - Id: "AppsyncTarget"
+          Arn: !Ref NotesAIAPIGraphqlArn
+          RoleArn: !GetAtt AppSyncInvocationRole.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt TargetDLQ.Arn
+          InputTransformer:
+            ## Map the fields required for mutation
+            InputPathsMap:
+              id: "$.id"
+              source: "$.source"
+              account: "$.account"
+              time: "$.time"
+              region: "$.region"
+              data: "$.detail.dynamodb.NewImage"
+              detailType: "$.detail-type"
+            InputTemplate: "{\"data\": <data>, \"detailType\": <detailType>, \"id\": <id>, \"source\": <source>, \"account\": <account>, \"time\": <time>,\"region\": <region>}"
+          # Mutation opreation EventBridge will do on your behalf, mapping to the publish schema.
+          AppSyncParameters:
+            GraphQLOperation: "mutation Publish($data:String!,$detailType:String!,$id:String!,$source:String!,$account:String!,$time:String!,$region:String!){publish(data:$data,detailType:$detailType,id:$id,source:$source,account:$account,time:$time,region:$region){data detailType id source account time region}}"
 
 
 
@@ -108,7 +142,9 @@ Resources:
       RetentionInDays: 14
 
 
-  NotesEventRuleLogRole:
+
+  # IAM Role for invoking the AppSync API
+  AppSyncInvocationRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -116,19 +152,13 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service:
-                - events.amazonaws.com
-            Action:
-              - sts:AssumeRole
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
       Policies:
-        - PolicyName: EBRuleToCWLogsPolicy
+        - PolicyName: AppSyncInvokePolicy
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                  - logs:CreateLogGroup
-                Resource:
-                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${NotesEventRuleLogGroup}:*"
+                Action: appsync:GraphQL
+                Resource: !Sub "${GraphqlAPI}/*"

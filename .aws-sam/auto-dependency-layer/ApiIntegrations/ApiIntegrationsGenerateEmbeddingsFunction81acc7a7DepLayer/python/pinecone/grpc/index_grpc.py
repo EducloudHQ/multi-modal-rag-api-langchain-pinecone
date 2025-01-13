@@ -1,9 +1,11 @@
 import logging
-from typing import Optional, Dict, Union, List, Tuple, Any, TypedDict, cast
+from typing import Optional, Dict, Union, List, Tuple, Any, TypedDict, Iterable, cast, Literal
 
 from google.protobuf import json_format
 
 from tqdm.autonotebook import tqdm
+from concurrent.futures import as_completed, Future
+
 
 from .utils import (
     dict_to_proto_struct,
@@ -18,10 +20,7 @@ from pinecone.core.openapi.data.models import (
     QueryResponse,
     DescribeIndexStatsResponse,
 )
-from pinecone.models.list_response import (
-    ListResponse as SimpleListResponse,
-    Pagination,
-)
+from pinecone.models.list_response import ListResponse as SimpleListResponse, Pagination
 from pinecone.core.grpc.protos.vector_service_pb2 import (
     Vector as GRPCVector,
     QueryVector as GRPCQueryVector,
@@ -32,13 +31,13 @@ from pinecone.core.grpc.protos.vector_service_pb2 import (
     FetchRequest,
     UpdateRequest,
     ListRequest,
-    ListResponse,
     DescribeIndexStatsRequest,
     DeleteResponse,
     UpdateResponse,
     SparseValues as GRPCSparseValues,
 )
 from pinecone import Vector as NonGRPCVector
+from pinecone.data.query_results_aggregator import QueryNamespacesResults, QueryResultsAggregator
 from pinecone.core.grpc.protos.vector_service_pb2_grpc import VectorServiceStub
 from .base import GRPCIndexBase
 from .future import PineconeGrpcFuture
@@ -137,7 +136,7 @@ class GRPCIndex(GRPCIndexBase):
         if async_req:
             args_dict = self._parse_non_empty_args([("namespace", namespace)])
             request = UpsertRequest(vectors=vectors, **args_dict, **kwargs)
-            future = self._wrap_grpc_call(self.stub.Upsert.future, request, timeout=timeout)
+            future = self.runner.run(self.stub.Upsert.future, request, timeout=timeout)
             return PineconeGrpcFuture(future)
 
         if batch_size is None:
@@ -146,18 +145,11 @@ class GRPCIndex(GRPCIndexBase):
         if not isinstance(batch_size, int) or batch_size <= 0:
             raise ValueError("batch_size must be a positive integer")
 
-        pbar = tqdm(
-            total=len(vectors),
-            disable=not show_progress,
-            desc="Upserted vectors",
-        )
+        pbar = tqdm(total=len(vectors), disable=not show_progress, desc="Upserted vectors")
         total_upserted = 0
         for i in range(0, len(vectors), batch_size):
             batch_result = self._upsert_batch(
-                vectors[i : i + batch_size],
-                namespace,
-                timeout=timeout,
-                **kwargs,
+                vectors[i : i + batch_size], namespace, timeout=timeout, **kwargs
             )
             pbar.update(batch_result.upserted_count)
             # we can't use here pbar.n for the case show_progress=False
@@ -166,15 +158,11 @@ class GRPCIndex(GRPCIndexBase):
         return UpsertResponse(upserted_count=total_upserted)
 
     def _upsert_batch(
-        self,
-        vectors: List[GRPCVector],
-        namespace: Optional[str],
-        timeout: Optional[float],
-        **kwargs,
+        self, vectors: List[GRPCVector], namespace: Optional[str], timeout: Optional[int], **kwargs
     ) -> UpsertResponse:
         args_dict = self._parse_non_empty_args([("namespace", namespace)])
         request = UpsertRequest(vectors=vectors, **args_dict)
-        return self._wrap_grpc_call(self.stub.Upsert, request, timeout=timeout, **kwargs)
+        return self.runner.run(self.stub.Upsert, request, timeout=timeout, **kwargs)
 
     def upsert_from_dataframe(
         self,
@@ -187,7 +175,7 @@ class GRPCIndex(GRPCIndexBase):
         """Upserts a dataframe into the index.
 
         Args:
-            df: A pandas dataframe with the following columns: id, vector, and metadata.
+            df: A pandas dataframe with the following columns: id, values, sparse_values, and metadata.
             namespace: The namespace to upsert into.
             batch_size: The number of rows to upsert in a single batch.
             use_async_requests: Whether to upsert multiple requests at the same time using asynchronous request mechanism.
@@ -204,18 +192,10 @@ class GRPCIndex(GRPCIndexBase):
         if not isinstance(df, pd.DataFrame):
             raise ValueError(f"Only pandas dataframes are supported. Found: {type(df)}")
 
-        pbar = tqdm(
-            total=len(df),
-            disable=not show_progress,
-            desc="sending upsert requests",
-        )
+        pbar = tqdm(total=len(df), disable=not show_progress, desc="sending upsert requests")
         results = []
         for chunk in self._iter_dataframe(df, batch_size=batch_size):
-            res = self.upsert(
-                vectors=chunk,
-                namespace=namespace,
-                async_req=use_async_requests,
-            )
+            res = self.upsert(vectors=chunk, namespace=namespace, async_req=use_async_requests)
             pbar.update(len(chunk))
             results.append(res)
 
@@ -224,9 +204,7 @@ class GRPCIndex(GRPCIndexBase):
             results = [
                 async_result.result()
                 for async_result in tqdm(
-                    cast_results,
-                    disable=not show_progress,
-                    desc="collecting async responses",
+                    cast_results, disable=not show_progress, desc="collecting async responses"
                 )
             ]
 
@@ -301,17 +279,18 @@ class GRPCIndex(GRPCIndexBase):
 
         request = DeleteRequest(**args_dict, **kwargs)
         if async_req:
-            future = self._wrap_grpc_call(self.stub.Delete.future, request, timeout=timeout)
+            future = self.runner.run(self.stub.Delete.future, request, timeout=timeout)
             return PineconeGrpcFuture(future)
         else:
-            return self._wrap_grpc_call(self.stub.Delete, request, timeout=timeout)
+            return self.runner.run(self.stub.Delete, request, timeout=timeout)
 
     def fetch(
         self,
         ids: Optional[List[str]],
         namespace: Optional[str] = None,
+        async_req: Optional[bool] = False,
         **kwargs,
-    ) -> FetchResponse:
+    ) -> Union[FetchResponse, PineconeGrpcFuture]:
         """
         The fetch operation looks up and returns vectors, by ID, from a single namespace.
         The returned vectors include the vector data and/or metadata.
@@ -332,9 +311,13 @@ class GRPCIndex(GRPCIndexBase):
         args_dict = self._parse_non_empty_args([("namespace", namespace)])
 
         request = FetchRequest(ids=ids, **args_dict, **kwargs)
-        response = self._wrap_grpc_call(self.stub.Fetch, request, timeout=timeout)
-        json_response = json_format.MessageToDict(response)
-        return parse_fetch_response(json_response)
+
+        if async_req:
+            future = self.runner.run(self.stub.Fetch.future, request, timeout=timeout)
+            return PineconeGrpcFuture(future, result_transformer=parse_fetch_response)
+        else:
+            response = self.runner.run(self.stub.Fetch, request, timeout=timeout)
+            return parse_fetch_response(response)
 
     def query(
         self,
@@ -346,8 +329,9 @@ class GRPCIndex(GRPCIndexBase):
         include_values: Optional[bool] = None,
         include_metadata: Optional[bool] = None,
         sparse_vector: Optional[Union[GRPCSparseValues, SparseVectorTypedDict]] = None,
+        async_req: Optional[bool] = False,
         **kwargs,
-    ) -> QueryResponse:
+    ) -> Union[QueryResponse, PineconeGrpcFuture]:
         """
         The Query operation searches a namespace, using a query vector.
         It retrieves the ids of the most similar items in a namespace, along with their similarity scores.
@@ -412,9 +396,58 @@ class GRPCIndex(GRPCIndexBase):
         request = QueryRequest(**args_dict)
 
         timeout = kwargs.pop("timeout", None)
-        response = self._wrap_grpc_call(self.stub.Query, request, timeout=timeout)
-        json_response = json_format.MessageToDict(response)
-        return parse_query_response(json_response, _check_type=False)
+
+        if async_req:
+            future = self.runner.run(self.stub.Query.future, request, timeout=timeout)
+            return PineconeGrpcFuture(future)
+        else:
+            response = self.runner.run(self.stub.Query, request, timeout=timeout)
+            json_response = json_format.MessageToDict(response)
+            return parse_query_response(json_response, _check_type=False)
+
+    def query_namespaces(
+        self,
+        vector: List[float],
+        namespaces: List[str],
+        metric: Literal["cosine", "euclidean", "dotproduct"],
+        top_k: Optional[int] = None,
+        filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        include_values: Optional[bool] = None,
+        include_metadata: Optional[bool] = None,
+        sparse_vector: Optional[Union[GRPCSparseValues, SparseVectorTypedDict]] = None,
+        **kwargs,
+    ) -> QueryNamespacesResults:
+        if namespaces is None or len(namespaces) == 0:
+            raise ValueError("At least one namespace must be specified")
+        if len(vector) == 0:
+            raise ValueError("Query vector must not be empty")
+
+        overall_topk = top_k if top_k is not None else 10
+        aggregator = QueryResultsAggregator(top_k=overall_topk, metric=metric)
+
+        target_namespaces = set(namespaces)  # dedup namespaces
+        futures = [
+            self.threadpool_executor.submit(
+                self.query,
+                vector=vector,
+                namespace=ns,
+                top_k=overall_topk,
+                filter=filter,
+                include_values=include_values,
+                include_metadata=include_metadata,
+                sparse_vector=sparse_vector,
+                async_req=False,
+                **kwargs,
+            )
+            for ns in target_namespaces
+        ]
+
+        only_futures = cast(Iterable[Future], futures)
+        for response in as_completed(only_futures):
+            aggregator.add_results(response.result())
+
+        final_results = aggregator.get_results()
+        return final_results
 
     def update(
         self,
@@ -422,10 +455,7 @@ class GRPCIndex(GRPCIndexBase):
         async_req: bool = False,
         values: Optional[List[float]] = None,
         set_metadata: Optional[
-            Dict[
-                str,
-                Union[str, float, int, bool, List[int], List[float], List[str]],
-            ]
+            Dict[str, Union[str, float, int, bool, List[int], List[float], List[str]]]
         ] = None,
         namespace: Optional[str] = None,
         sparse_values: Optional[Union[GRPCSparseValues, SparseVectorTypedDict]] = None,
@@ -478,10 +508,10 @@ class GRPCIndex(GRPCIndexBase):
 
         request = UpdateRequest(id=id, **args_dict)
         if async_req:
-            future = self._wrap_grpc_call(self.stub.Update.future, request, timeout=timeout)
+            future = self.runner.run(self.stub.Update.future, request, timeout=timeout)
             return PineconeGrpcFuture(future)
         else:
-            return self._wrap_grpc_call(self.stub.Update, request, timeout=timeout)
+            return self.runner.run(self.stub.Update, request, timeout=timeout)
 
     def list_paginated(
         self,
@@ -526,7 +556,7 @@ class GRPCIndex(GRPCIndexBase):
         )
         request = ListRequest(**args_dict, **kwargs)
         timeout = kwargs.pop("timeout", None)
-        response = self._wrap_grpc_call(self.stub.List, request, timeout=timeout)
+        response = self.runner.run(self.stub.List, request, timeout=timeout)
 
         if response.pagination and response.pagination.next != "":
             pagination = Pagination(next=response.pagination.next)
@@ -534,9 +564,7 @@ class GRPCIndex(GRPCIndexBase):
             pagination = None
 
         return SimpleListResponse(
-            namespace=response.namespace,
-            vectors=response.vectors,
-            pagination=pagination,
+            namespace=response.namespace, vectors=response.vectors, pagination=pagination
         )
 
     def list(self, **kwargs):
@@ -576,9 +604,7 @@ class GRPCIndex(GRPCIndexBase):
                 done = True
 
     def describe_index_stats(
-        self,
-        filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
-        **kwargs,
+        self, filter: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None, **kwargs
     ) -> DescribeIndexStatsResponse:
         """
         The DescribeIndexStats operation returns statistics about the index's contents.
@@ -603,7 +629,7 @@ class GRPCIndex(GRPCIndexBase):
         timeout = kwargs.pop("timeout", None)
 
         request = DescribeIndexStatsRequest(**args_dict)
-        response = self._wrap_grpc_call(self.stub.DescribeIndexStats, request, timeout=timeout)
+        response = self.runner.run(self.stub.DescribeIndexStats, request, timeout=timeout)
         json_response = json_format.MessageToDict(response)
         return parse_stats_response(json_response)
 
@@ -613,7 +639,7 @@ class GRPCIndex(GRPCIndexBase):
 
     @staticmethod
     def _parse_sparse_values_arg(
-        sparse_values: Optional[Union[GRPCSparseValues, SparseVectorTypedDict]]
+        sparse_values: Optional[Union[GRPCSparseValues, SparseVectorTypedDict]],
     ) -> Optional[GRPCSparseValues]:
         if sparse_values is None:
             return None
@@ -621,7 +647,11 @@ class GRPCIndex(GRPCIndexBase):
         if isinstance(sparse_values, GRPCSparseValues):
             return sparse_values
 
-        if not isinstance(sparse_values, dict) or "indices" not in sparse_values or "values" not in sparse_values:
+        if (
+            not isinstance(sparse_values, dict)
+            or "indices" not in sparse_values
+            or "values" not in sparse_values
+        ):
             raise ValueError(
                 "Invalid sparse values argument. Expected a dict of: {'indices': List[int], 'values': List[float]}."
                 f"Received: {sparse_values}"

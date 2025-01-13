@@ -1,4 +1,4 @@
-"""The :class:`Schema` class, including its metaclass and options (class Meta)."""
+"""The `Schema <marshmallow.Schema>` class, including its metaclass and options (class Meta)."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ from marshmallow.utils import (
 from marshmallow.warnings import RemovedInMarshmallow4Warning
 
 
-def _get_fields(attrs):
+def _get_fields(attrs) -> list[tuple[str, ma_fields.Field]]:
     """Get fields from a class
 
     :param attrs: Mapping of class attributes
@@ -60,7 +60,7 @@ def _get_fields_by_mro(klass: SchemaMeta):
     class itself is excluded from the search; only its parents are checked. Get
     fields from ``_declared_fields`` if available, else use ``__dict__``.
 
-    :param type klass: Class whose fields to retrieve
+    :param klass: Class whose fields to retrieve
     """
     mro = inspect.getmro(klass)
     # Loop over mro in reverse to maintain correct order of fields
@@ -124,10 +124,10 @@ class SchemaMeta(ABCMeta):
     def get_declared_fields(
         mcs,
         klass: SchemaMeta,
-        cls_fields: list,
-        inherited_fields: list,
+        cls_fields: list[tuple[str, ma_fields.Field]],
+        inherited_fields: list[tuple[str, ma_fields.Field]],
         dict_cls: type[dict] = dict,
-    ):
+    ) -> dict[str, ma_fields.Field]:
         """Returns a dictionary of field_name => `Field` pairs declared on the class.
         This is exposed mainly so that plugins can add additional fields, e.g. fields
         computed from class Meta options.
@@ -154,7 +154,7 @@ class SchemaMeta(ABCMeta):
         """
         mro = inspect.getmro(cls)
 
-        hooks = defaultdict(list)  # type: dict[str, list[tuple[str, bool, dict]]]
+        hooks: dict[str, list[tuple[str, bool, dict]]] = defaultdict(list)
 
         for attr_name in dir(cls):
             # Need to look up the actual descriptor, not whatever might be
@@ -174,7 +174,9 @@ class SchemaMeta(ABCMeta):
                 continue
 
             try:
-                hook_config = attr.__marshmallow_hook__  # type: dict[str, list[tuple[bool, dict]]]
+                hook_config: dict[str, list[tuple[bool, dict]]] = (
+                    attr.__marshmallow_hook__
+                )
             except AttributeError:
                 pass
             else:
@@ -189,7 +191,7 @@ class SchemaMeta(ABCMeta):
 
 
 class SchemaOpts:
-    """class Meta options for the :class:`Schema`. Defines defaults."""
+    """class Meta options for the `Schema <marshmallow.Schema>`. Defines defaults."""
 
     def __init__(self, meta, ordered: bool = False):
         self.fields = getattr(meta, "fields", ())
@@ -280,16 +282,9 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
 
     .. versionchanged:: 3.0.0
         `prefix` parameter removed.
-
-    .. versionchanged:: 2.0.0
-        `__validators__`, `__preprocessors__`, and `__data_handlers__` are removed in favor of
-        `marshmallow.decorators.validates_schema`,
-        `marshmallow.decorators.pre_load` and `marshmallow.decorators.post_dump`.
-        `__accessor__` and `__error_handler__` are deprecated. Implement the
-        `handle_error` and `get_attribute` methods instead.
     """
 
-    TYPE_MAPPING = {
+    TYPE_MAPPING: dict[type, type[ma_fields.Field]] = {
         str: ma_fields.String,
         bytes: ma_fields.String,
         dt.datetime: ma_fields.DateTime,
@@ -304,23 +299,23 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         dt.date: ma_fields.Date,
         dt.timedelta: ma_fields.TimeDelta,
         decimal.Decimal: ma_fields.Decimal,
-    }  # type: dict[type, typing.Type[ma_fields.Field]]
+    }
     #: Overrides for default schema-level error messages
-    error_messages = {}  # type: dict[str, str]
+    error_messages: dict[str, str] = {}
 
-    _default_error_messages = {
+    _default_error_messages: dict[str, str] = {
         "type": "Invalid input type.",
         "unknown": "Unknown field.",
-    }  # type: dict[str, str]
+    }
 
-    OPTIONS_CLASS = SchemaOpts  # type: type
+    OPTIONS_CLASS: type = SchemaOpts
 
     set_class = OrderedSet
 
     # These get set by SchemaMeta
-    opts = None  # type: SchemaOpts
-    _declared_fields = {}  # type: dict[str, ma_fields.Field]
-    _hooks = {}  # type: dict[str, list[tuple[str, bool, dict]]]
+    opts: typing.Any
+    _declared_fields: dict[str, ma_fields.Field] = {}
+    _hooks: dict[str, list[tuple[str, bool, dict]]] = {}
 
     class Meta:
         """Options object for a Schema.
@@ -349,15 +344,15 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         - ``timeformat``: Default format for `Time <fields.Time>` fields.
         - ``render_module``: Module to use for `loads <Schema.loads>` and `dumps <Schema.dumps>`.
             Defaults to `json` from the standard library.
-        - ``ordered``: If `True`, output of `Schema.dump` will be a `collections.OrderedDict`.
+        - ``ordered``: If `True`, output of `Schema.dump <marshmallow.Schema.dump>` will be a `collections.OrderedDict`.
         - ``index_errors``: If `True`, errors dictionaries will include the index
             of invalid items in a collection.
         - ``load_only``: Tuple or list of fields to exclude from serialized results.
         - ``dump_only``: Tuple or list of fields to exclude from deserialization
         - ``unknown``: Whether to exclude, include, or raise an error for unknown
             fields in the data. Use `EXCLUDE`, `INCLUDE` or `RAISE`.
-        - ``register``: Whether to register the `Schema` with marshmallow's internal
-            class registry. Must be `True` if you intend to refer to this `Schema`
+        - ``register``: Whether to register the `Schema <marshmallow.Schema>` with marshmallow's internal
+            class registry. Must be `True` if you intend to refer to this `Schema <marshmallow.Schema>`
             by class name in `Nested` fields. Only set this to `False` when memory
             usage is critical. Defaults to `True`.
         """
@@ -395,12 +390,19 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
             if unknown is None
             else validate_unknown_parameter_value(unknown)
         )
+        if context:
+            warnings.warn(
+                "The `context` parameter is deprecated and will be removed in marshmallow 4.0. "
+                "Use `contextvars.ContextVar` to pass context instead.",
+                RemovedInMarshmallow4Warning,
+                stacklevel=2,
+            )
         self.context = context or {}
         self._normalize_nested_options()
         #: Dictionary mapping field_names -> :class:`Field` objects
-        self.fields = {}  # type: dict[str, ma_fields.Field]
-        self.load_fields = {}  # type: dict[str, ma_fields.Field]
-        self.dump_fields = {}  # type: dict[str, ma_fields.Field]
+        self.fields: dict[str, ma_fields.Field] = {}
+        self.load_fields: dict[str, ma_fields.Field] = {}
+        self.dump_fields: dict[str, ma_fields.Field] = {}
         self._init_fields()
         messages = {}
         messages.update(self._default_error_messages)
@@ -422,11 +424,11 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
     @classmethod
     def from_dict(
         cls,
-        fields: dict[str, ma_fields.Field | type[ma_fields.Field]],
+        fields: dict[str, ma_fields.Field],
         *,
         name: str = "GeneratedSchema",
     ) -> type[Schema]:
-        """Generate a `Schema` class given a dictionary of fields.
+        """Generate a `Schema <marshmallow.Schema>` class given a dictionary of fields.
 
         .. code-block:: python
 
@@ -438,17 +440,17 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         Generated schemas are not added to the class registry and therefore cannot
         be referred to by name in `Nested` fields.
 
-        :param dict fields: Dictionary mapping field names to field instances.
-        :param str name: Optional name for the class, which will appear in
+
+        :param fields: Dictionary mapping field names to field instances.
+        :param name: Optional name for the class, which will appear in
             the ``repr`` for the class.
 
         .. versionadded:: 3.0.0
         """
-        attrs = fields.copy()
-        attrs["Meta"] = type(
+        Meta = type(
             "GeneratedMeta", (getattr(cls, "Meta", object),), {"register": False}
         )
-        schema_cls = type(name, (cls,), attrs)
+        schema_cls = type(name, (cls,), {**fields.copy(), "Meta": Meta})
         return schema_cls
 
     ##### Override-able methods #####
@@ -463,8 +465,6 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         :param many: Value of ``many`` on dump or load.
         :param partial: Value of ``partial`` on load.
 
-        .. versionadded:: 2.0.0
-
         .. versionchanged:: 3.0.0rc9
             Receives `many` and `partial` (on deserialization) as keyword arguments.
         """
@@ -472,8 +472,6 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
 
     def get_attribute(self, obj: typing.Any, attr: str, default: typing.Any):
         """Defines how to pull values from an object to serialize.
-
-        .. versionadded:: 2.0.0
 
         .. versionchanged:: 3.0.0a1
             Changed position of ``obj`` and ``attr``.
@@ -486,11 +484,11 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
     def _call_and_store(getter_func, data, *, field_name, error_store, index=None):
         """Call ``getter_func`` with ``data`` as its argument, and store any `ValidationErrors`.
 
-        :param callable getter_func: Function for getting the serialized/deserialized
+        :param getter_func: Function for getting the serialized/deserialized
             value from ``data``.
         :param data: The data passed to ``getter_func``.
-        :param str field_name: Field name.
-        :param int index: Index of the item being validated, if validating a collection,
+        :param field_name: Field name.
+        :param index: Index of the item being validated, if validating a collection,
             otherwise `None`.
         """
         try:
@@ -506,11 +504,8 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         """Serialize ``obj``.
 
         :param obj: The object(s) to serialize.
-        :param bool many: `True` if ``data`` should be serialized as a collection.
+        :param many: `True` if ``data`` should be serialized as a collection.
         :return: A dictionary of the serialized data
-
-        .. versionchanged:: 1.0.0
-            Renamed from ``marshal``.
         """
         if many and obj is not None:
             return [self._serialize(d, many=False) for d in obj]
@@ -589,16 +584,16 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
     ) -> typing.Any | list[typing.Any]:
         """Deserialize ``data``.
 
-        :param dict data: The data to deserialize.
-        :param ErrorStore error_store: Structure to store errors.
-        :param bool many: `True` if ``data`` should be deserialized as a collection.
-        :param bool|tuple partial: Whether to ignore missing fields and not require
+        :param data: The data to deserialize.
+        :param error_store: Structure to store errors.
+        :param many: `True` if ``data`` should be deserialized as a collection.
+        :param partial: Whether to ignore missing fields and not require
             any fields declared. Propagates down to ``Nested`` fields as well. If
             its value is an iterable, only missing fields listed in that iterable
             will be ignored. Use dot delimiters to specify nested fields.
         :param unknown: Whether to exclude, include, or raise an error for unknown
             fields in the data. Use `EXCLUDE`, `INCLUDE` or `RAISE`.
-        :param int index: Index of the item being serialized (for storing errors) if
+        :param index: Index of the item being serialized (for storing errors) if
             serializing a collection, otherwise `None`.
         :return: The deserialized data as `dict_class` instance or list of `dict_class`
         instances if `many` is `True`.
@@ -836,7 +831,7 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         :return: Deserialized data
         """
         error_store = ErrorStore()
-        errors = {}  # type: dict[str, list[str]]
+        errors: dict[str, list[str]] = {}
         many = self.many if many is None else bool(many)
         unknown = (
             self.unknown
@@ -853,7 +848,7 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
                 )
             except ValidationError as err:
                 errors = err.normalized_messages()
-                result = None  # type: list | dict | None
+                result: list | dict | None = None
         else:
             processed_data = data
         if not errors:
@@ -1022,7 +1017,7 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         self.load_fields = load_fields
 
     def on_bind_field(self, field_name: str, field_obj: ma_fields.Field) -> None:
-        """Hook to modify a field when it is bound to the `Schema`.
+        """Hook to modify a field when it is bound to the `Schema <marshmallow.Schema>`.
 
         No-op by default.
         """

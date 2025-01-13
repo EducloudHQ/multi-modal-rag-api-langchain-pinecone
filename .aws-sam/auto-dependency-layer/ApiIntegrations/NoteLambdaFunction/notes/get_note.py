@@ -8,7 +8,7 @@ dynamodb = boto3.resource("dynamodb")
 tracer = Tracer(service="get_note")
 logger = Logger(service="get_note")
 
-table = dynamodb.Table(os.environ["NOTES_TABLE"])
+table = dynamodb.Table(os.environ["USER_NOTES_TABLE"])
 
 
 @tracer.capture_method

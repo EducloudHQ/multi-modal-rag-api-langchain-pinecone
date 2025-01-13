@@ -29,7 +29,7 @@ def set_doc_status(user_id: str, document_id: str, status: str) -> None:
     """
     document_table.update_item(
         Key={"userId": user_id, "documentId": document_id},
-        UpdateExpression="SET docstatus = :docstatus",
+        UpdateExpression="SET documentStatus = :docstatus",
         ExpressionAttributeValues={":docstatus": status},
     )
 
@@ -41,11 +41,12 @@ def lambda_handler(event, context):
     s3.download_file(BUCKET, key, f"/tmp/{key}")
 
     data = json.loads(Path(f"/tmp/{key}").read_text())
+    user_id = "UPLOADER_ID"
 
     transcript = data['results']['transcripts'][0]['transcript']
 
     logger.info(f"loaded data {data['results']['transcripts'][0]['transcript']}")
-    set_doc_status("rosius", document_id, "PROCESSING")
+    set_doc_status(user_id, document_id, "PROCESSING")
     # Create or recreate the Pinecone index
     index = create_or_recreate_index(
         index_name=index_name,
@@ -68,7 +69,7 @@ def lambda_handler(event, context):
     docs = text_splitter.create_documents([transcript])
 
     logger.info(f"Found {len(docs)}, {docs}")
-
+    set_doc_status(user_id, document_id, "EMBEDDING")
     logger.info(f"Found {len(docs)}, {docs}")
 
     vector_store = PineconeVectorStore(

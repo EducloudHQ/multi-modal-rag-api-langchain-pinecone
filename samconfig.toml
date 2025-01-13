@@ -14,7 +14,7 @@ lint = true
 
 [default.deploy.parameters]
 capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
-confirm_changeset = true
+confirm_changeset = false
 resolve_s3 = true
 s3_prefix = "multi-modal-rag-notes-api"
 region = "us-east-1"

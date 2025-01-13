@@ -11,7 +11,7 @@ dynamodb = boto3.resource("dynamodb")
 logger = Logger(service="update_note")
 tracer = Tracer(service="update_note")
 
-table = dynamodb.Table(os.environ["NOTES_TABLE"])
+table = dynamodb.Table(os.environ["USER_NOTES_TABLE"])
 
 
 # https://stackoverflow.com/questions/63026648/errormessage-class-decimal-inexact-class-decimal-rounded-while

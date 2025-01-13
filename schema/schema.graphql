@@ -3,7 +3,15 @@ schema {
             mutation: Mutation
             subscription: Subscription
         }
-
+type Event @aws_iam{
+	id: String!
+	source: String!
+	account: String!
+	time: String!
+	region: String!
+	detailType: String!
+	data: AWSJSON!
+}
 type Query{
     enhanceNote(input:String!):EnhanceNoteResult! @aws_api_key
     getNote(id:String!,userId:String!):Note! @aws_api_key
@@ -12,14 +20,19 @@ type Query{
 }
 
 type Mutation{
+    publish(detailType: String!, id:String! data: String!, source: String!, account: String!, time: String!, region: String!): Event @aws_iam @aws_api_key
     createUserAccount(input:CreateUserInput!):User! @aws_api_key
     createNote(notesInput:CreateNoteInput!):Note! @aws_api_key
     updateNote(notesInput:updateNoteInput!):Note! @aws_api_key
+    createDocument(input:CreateDocumentInput!):Document!@aws_api_key
+    updateDocument(input:UpdateDocumentInput!):Document! @aws_api_key
 
 }
 
 type Subscription {
   createdNote: Note @aws_subscribe(mutations: ["createNote"])
+    subscribe(detailType: String, account: String, source: String, region: String): Event
+		@aws_subscribe(mutations: ["publish"])
 
 }
 type DocumentResult @aws_api_key{
@@ -46,6 +59,32 @@ type Note{
     updatedOn:AWSTimestamp!
 }
 
+type Document{
+    id:ID!
+    documentName:String!
+    documentType:DOCUMENT_TYPE!
+    documentSize:String!
+    documentStatus:DOCUMENT_STATUS!
+    createdOn:AWSTimestamp!
+    updatedOn:AWSTimestamp!
+}
+
+input CreateDocumentInput{
+    documentName:String!
+    documentType:DOCUMENT_TYPE!
+    documentSize:String!
+    documentStatus:DOCUMENT_STATUS!
+    createdOn:AWSTimestamp!
+}
+
+input UpdateDocumentInput{
+    id:ID!
+    documentStatus:DOCUMENT_STATUS!
+    updatedOn:AWSTimestamp!
+}
+
+
+
 input CreateNoteInput{
 
     note:String!
@@ -70,6 +109,19 @@ input CreateUserInput{
     email:AWSEmail!
 
 
+}
+
+enum DOCUMENT_TYPE{
+    PDF
+    MP3
+    MP4
+}
+
+enum DOCUMENT_STATUS{
+    UPLOADED
+    PROCESSING
+    EMBEDDING
+    COMPLETED
 }
 
 

@@ -43,12 +43,15 @@ Resources:
       - DynamoDBCrudPolicy:
           TableName:
             Ref: DocumentTable
+      - AWSSecretsManagerGetSecretValuePolicy:
+          SecretArn:
+            Fn::Sub: arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dev/pinecone-secret-GTZ20L
       - Statement:
         - Sid: BedrockScopedAccess
           Effect: Allow
           Action: bedrock:InvokeModel
           Resource:
-          - arn:aws:bedrock:*::foundation-model/anthropic.claude-v2
+          - arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0
           - arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1
       Environment:
         Variables:
@@ -147,12 +150,15 @@ Resources:
             Ref: UserNotesTable
       - S3CrudPolicy:
           BucketName: multi-modal-rag-notes-api-apiintegrations
+      - AWSSecretsManagerGetSecretValuePolicy:
+          SecretArn:
+            Fn::Sub: arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dev/pinecone-secret-GTZ20L
       - Statement:
         - Sid: BedrockScopedAccess
           Effect: Allow
           Action: bedrock:InvokeModel
           Resource:
-          - arn:aws:bedrock:*::foundation-model/anthropic.claude-v2
+          - arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0
           - arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1
       Tags:
         SOLUTION: LambdaPowertoolsPython
@@ -344,12 +350,15 @@ Resources:
             Fn::GetAtt:
             - TranscribeMediaWorkflowSfn
             - Name
+      - AWSSecretsManagerGetSecretValuePolicy:
+          SecretArn:
+            Fn::Sub: arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:dev/pinecone-secret-GTZ20L
       - Statement:
         - Sid: BedrockScopedAccess
           Effect: Allow
           Action: bedrock:InvokeModel
           Resource:
-          - arn:aws:bedrock:*::foundation-model/anthropic.claude-v2
+          - arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0
           - arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v1
       Environment:
         Variables:

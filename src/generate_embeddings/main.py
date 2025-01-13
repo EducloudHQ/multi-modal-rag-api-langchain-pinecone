@@ -36,7 +36,7 @@ def set_doc_status(user_id: str, document_id: str, status: str) -> None:
     """
     document_table.update_item(
         Key={"userId": user_id, "documentId": document_id},
-        UpdateExpression="SET docstatus = :docstatus",
+        UpdateExpression="SET documentStatus = :docstatus",
         ExpressionAttributeValues={":docstatus": status},
     )
 
@@ -58,7 +58,8 @@ def lambda_handler(event: SQSEvent, context):
 
         extension = event_body.get("extension")
         s3_uri = event_body.get("s3_uri")
-        user_id = event_body.get("user")
+        #user_id = event_body.get("user")
+        user_id = "UPLOADER_ID"
         document_id = event_body.get("documentId")
         key = event_body.get("key")
 
@@ -112,6 +113,7 @@ def lambda_handler(event: SQSEvent, context):
             region="us-east-1",
             cloud_provider="aws",
         )
+        set_doc_status(user_id, document_id, "EMBEDDING")
 
         # Use LangChain's Bedrock embeddings
         embeddings = BedrockEmbeddings(model_id="amazon.titan-embed-text-v1")
@@ -123,5 +125,5 @@ def lambda_handler(event: SQSEvent, context):
         logger.info("Vector store updated with PDF contents.")
 
         # Update doc status to "READY"
-        set_doc_status(user_id, document_id, "READY")
+        set_doc_status(user_id, document_id, "COMPLETED")
         logger.info(f"Document {document_id} for user {user_id} is READY.")

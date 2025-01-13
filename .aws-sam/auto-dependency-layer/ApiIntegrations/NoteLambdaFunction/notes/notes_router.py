@@ -5,16 +5,17 @@ from notes.update_note import update_note
 from notes.get_note import get_note
 from notes.get_notes import get_notes
 from notes.enhance_note import enhance_note
-from notes.models.create_note import CreateNoteInput
-from aws_lambda_powertools.utilities.parser import event_parser
+
 
 logger = Logger(child=True)
 router = Router()
 
 
 @router.resolver(type_name="Mutation", field_name="createNote")
-@event_parser(model=CreateNoteInput)
-def create_notes(notesInput:CreateNoteInput):
+
+def create_notes(notesInput=None):
+    if notesInput is None:
+        notesInput = {}
     logger.info(f"Received notes input {notesInput}")
 
     return create_note(notesInput)

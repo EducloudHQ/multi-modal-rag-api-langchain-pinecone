@@ -5,7 +5,7 @@ codeuri = "/Users/rosius/Documents/multi-modal-rag-notes-api/multi-modal-rag-not
 runtime = "python3.11"
 architecture = "x86_64"
 handler = "app.lambda_handler"
-manifest_hash = "248a52880cecae9ca13d40924ca050db"
+manifest_hash = "1a21493d8e1128b3685e46977258820b"
 packagetype = "Zip"
 functions = ["ApiIntegrations/NoteLambdaFunction"]
 
@@ -23,7 +23,7 @@ codeuri = "/Users/rosius/Documents/multi-modal-rag-notes-api/multi-modal-rag-not
 runtime = "python3.11"
 architecture = "x86_64"
 handler = "main.lambda_handler"
-manifest_hash = "e0047368582b5fa033926c08efdc3480"
+manifest_hash = "16bfd0274b836af6b35b4d3c608697ee"
 packagetype = "Zip"
 functions = ["ApiIntegrations/GenerateEmbeddingsFromTextFunction", "ApiIntegrations/GenerateEmbeddingsFunction"]
 

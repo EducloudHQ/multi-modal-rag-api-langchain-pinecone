@@ -8,7 +8,7 @@ from botocore.exceptions import ClientError
 dynamodb = boto3.resource("dynamodb")
 logger = Logger(service="get_notes_resolver")
 
-table = dynamodb.Table(os.environ["NOTES_TABLE"])
+table = dynamodb.Table(os.environ["USER_NOTES_TABLE"])
 
 
 def get_notes(userId:str):

@@ -1,8 +1,6 @@
 from aws_lambda_powertools import Logger, Tracer
 import boto3
 import os
-from notes.models.create_note import CreateNoteInput
-
 from decimal import *
 from aws_lambda_powertools.utilities.data_classes.appsync import scalar_types_utils
 from botocore.exceptions import ClientError
@@ -17,7 +15,9 @@ table = dynamodb.Table(os.environ["USER_NOTES_TABLE"])
 
 # https://stackoverflow.com/questions/63026648/errormessage-class-decimal-inexact-class-decimal-rounded-while
 @tracer.capture_method
-def create_note(notesInput: CreateNoteInput):
+def create_note(notesInput=None):
+    if notesInput is None:
+        notesInput = {}
     notesInput.id = scalar_types_utils.make_id()
     notesInput.createdOn = scalar_types_utils.aws_timestamp()
 

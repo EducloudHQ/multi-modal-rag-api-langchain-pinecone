@@ -40,7 +40,7 @@ Resources:
   NotesAIAPI:
     Type: AWS::AppSync::GraphQLApi
     Properties:
-      Name: NotesAIAPI
+      Name: MULTIMODAL_RAG_API
       AuthenticationType: API_KEY
       AdditionalAuthenticationProviders:
       - AuthenticationType: AMAZON_COGNITO_USER_POOLS
@@ -49,6 +49,7 @@ Resources:
             Ref: AWS::Region
           UserPoolId:
             Ref: CognitoUserPool
+      - AuthenticationType: AWS_IAM
       XrayEnabled: true
       LogConfig:
         CloudWatchLogsRoleArn:
@@ -86,6 +87,37 @@ Resources:
       LambdaConfig:
         LambdaFunctionArn:
           Ref: NoteLambdaFunction
+  AppSyncNotesTableDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: NoneDataSource
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      Description: None
+      Type: NONE
+  AppSyncMutationResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: NotesAIAPISchema
+    Properties:
+      ApiId:
+        Fn::GetAtt:
+        - NotesAIAPI
+        - ApiId
+      TypeName: Mutation
+      FieldName: publish
+      DataSourceName:
+        Fn::GetAtt:
+        - AppSyncNotesTableDataSource
+        - Name
+      RequestMappingTemplate: "{\n  \"version\": \"2017-02-28\",\n  \"payload\": {\n\
+        \      \"id\": \"$context.arguments.id\",\n      \"source\": \"$context.arguments.source\"\
+        ,\n      \"account\": \"$context.arguments.account\",\n      \"time\": \"\
+        $context.arguments.time\",\n      \"region\": \"$context.arguments.region\"\
+        ,\n      \"detailType\": \"$context.arguments.detailType\",\n      \"data\"\
+        : \"$context.arguments.data\"\n  }\n}\n"
+      ResponseMappingTemplate: $util.toJson($context.result)
   CreateUserAccountResolver:
     Type: AWS::AppSync::Resolver
     Properties:
@@ -178,6 +210,13 @@ Resources:
         - NoteFunctionDataSource
         - Name
 Outputs:
-  NotesAIAPI:
+  NotesAIAPIArn:
     Value:
-      Ref: NotesAIAPI
+      Fn::GetAtt:
+      - NotesAIAPI
+      - Arn
+  NotesAIAPIGraphqlArn:
+    Value:
+      Fn::GetAtt:
+      - NotesAIAPI
+      - GraphQLEndpointArn

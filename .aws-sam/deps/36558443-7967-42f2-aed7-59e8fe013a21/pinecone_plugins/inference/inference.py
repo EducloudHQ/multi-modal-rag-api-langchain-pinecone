@@ -6,9 +6,9 @@ from .core.client import ApiClient
 from .core.client.api.inference_api import InferenceApi
 from .core.client.model.embed_request import EmbedRequest
 from .core.client.model.embed_request_inputs import EmbedRequestInputs
-from .core.client.model.embed_request_parameters import EmbedRequestParameters
+
 from .core.client.model.document import Document
-from .core.client.model.inline_object import InlineObject as RerankRequest
+from .core.client.model.rerank_request import RerankRequest
 from .models import EmbeddingsList, RerankResult
 from .version import API_VERSION
 
@@ -80,7 +80,7 @@ class Inference(PineconePlugin):
             request_body = EmbedRequest(
                 model=model,
                 inputs=embeddings_inputs,
-                parameters=EmbedRequestParameters(**parameters),
+                parameters=parameters,
             )
         else:
             request_body = EmbedRequest(
@@ -181,5 +181,5 @@ class Inference(PineconePlugin):
             args["parameters"] = parameters
 
         rerank_request = RerankRequest(**args)
-        api_response = self.inference_api.rerank(inline_object=rerank_request)
+        api_response = self.inference_api.rerank(rerank_request=rerank_request)
         return RerankResult(api_response)

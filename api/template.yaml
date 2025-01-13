@@ -42,13 +42,14 @@ Resources:
   NotesAIAPI:
     Type: "AWS::AppSync::GraphQLApi"
     Properties:
-        Name: NotesAIAPI
+        Name: MULTIMODAL_RAG_API
         AuthenticationType: "API_KEY"
         AdditionalAuthenticationProviders:
             - AuthenticationType: AMAZON_COGNITO_USER_POOLS
               UserPoolConfig:
                   AwsRegion: !Ref AWS::Region
                   UserPoolId: !Ref CognitoUserPool
+            - AuthenticationType: AWS_IAM
         XrayEnabled: true
         LogConfig:
             CloudWatchLogsRoleArn: !GetAtt RoleAppSyncCloudWatch.Arn
@@ -75,7 +76,37 @@ Resources:
 
       LambdaConfig:
         LambdaFunctionArn: !Ref NoteLambdaFunction
-
+  AppSyncNotesTableDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: NoneDataSource
+      ApiId: !GetAtt NotesAIAPI.ApiId
+      Description: "None"
+      Type: NONE
+  # Mutation resolver
+  AppSyncMutationResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: NotesAIAPISchema
+    Properties:
+      ApiId: !GetAtt NotesAIAPI.ApiId
+      TypeName: Mutation
+      FieldName: publish
+      DataSourceName: !GetAtt AppSyncNotesTableDataSource.Name
+      # Map the request into the desired payload
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "payload": {
+              "id": "$context.arguments.id",
+              "source": "$context.arguments.source",
+              "account": "$context.arguments.account",
+              "time": "$context.arguments.time",
+              "region": "$context.arguments.region",
+              "detailType": "$context.arguments.detailType",
+              "data": "$context.arguments.data"
+          }
+        }
+      ResponseMappingTemplate: "$util.toJson($context.result)"
   CreateUserAccountResolver:
     Type: "AWS::AppSync::Resolver"
     Properties:
@@ -135,5 +166,7 @@ Resources:
   ##################
 Outputs:
 
-  NotesAIAPI:
-    Value: !Ref NotesAIAPI
+  NotesAIAPIArn:
+    Value: !GetAtt NotesAIAPI.Arn
+  NotesAIAPIGraphqlArn:
+    Value: !GetAtt NotesAIAPI.GraphQLEndpointArn

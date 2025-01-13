@@ -16,17 +16,6 @@ Resources:
       Location: DynamoDB/template.yaml
     Metadata:
       SamResourceId: DynamoDB
-  EventBridge:
-    Type: AWS::Serverless::Application
-    Properties:
-      Location: EventBridge/template.yaml
-      Parameters:
-        DocumentTableStreamARN:
-          Fn::GetAtt:
-          - DynamoDB
-          - Outputs.DDBDocumentTableStreamArn
-    Metadata:
-      SamResourceId: EventBridge
   ApiIntegrations:
     Type: AWS::Serverless::Application
     Properties:
@@ -77,10 +66,29 @@ Resources:
           - Outputs.CognitoUserPool
     Metadata:
       SamResourceId: GraphqlAPI
+  EventBridge:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: EventBridge/template.yaml
+      Parameters:
+        DocumentTableStreamARN:
+          Fn::GetAtt:
+          - DynamoDB
+          - Outputs.DDBDocumentTableStreamArn
+        GraphqlAPI:
+          Fn::GetAtt:
+          - GraphqlAPI
+          - Outputs.NotesAIAPIArn
+        NotesAIAPIGraphqlArn:
+          Fn::GetAtt:
+          - GraphqlAPI
+          - Outputs.NotesAIAPIGraphqlArn
+    Metadata:
+      SamResourceId: EventBridge
 Outputs:
   NotesAIAPI:
     Description: Notes Graphql API
     Value:
       Fn::GetAtt:
       - GraphqlAPI
-      - Outputs.NotesAIAPI
+      - Outputs.NotesAIAPIGraphqlArn

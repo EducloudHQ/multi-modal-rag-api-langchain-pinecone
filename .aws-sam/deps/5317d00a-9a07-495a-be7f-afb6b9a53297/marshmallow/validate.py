@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 import typing
+import warnings
 from abc import ABC, abstractmethod
 from itertools import zip_longest
 from operator import attrgetter
 
 from marshmallow import types
 from marshmallow.exceptions import ValidationError
+from marshmallow.warnings import ChangedInMarshmallow4Warning
 
 _T = typing.TypeVar("_T")
 
@@ -22,7 +24,7 @@ class Validator(ABC):
         add a useful `__repr__` implementation for validators.
     """
 
-    error = None  # type: str | None
+    error: str | None = None
 
     def __repr__(self) -> str:
         args = self._repr_args()
@@ -65,7 +67,7 @@ class And(Validator):
 
     def __init__(self, *validators: types.Validator, error: str | None = None):
         self.validators = tuple(validators)
-        self.error = error or self.default_error_message  # type: str
+        self.error: str = error or self.default_error_message
 
     def _repr_args(self) -> str:
         return f"validators={self.validators!r}"
@@ -77,6 +79,12 @@ class And(Validator):
             try:
                 r = validator(value)
                 if not isinstance(validator, Validator) and r is False:
+                    warnings.warn(
+                        "Returning `False` from a validator is deprecated. "
+                        "Raise a `ValidationError` instead.",
+                        ChangedInMarshmallow4Warning,
+                        stacklevel=2,
+                    )
                     raise ValidationError(self.error)
             except ValidationError as err:
                 kwargs.update(err.kwargs)
@@ -191,7 +199,7 @@ class URL(Validator):
             )
         self.relative = relative
         self.absolute = absolute
-        self.error = error or self.default_message  # type: str
+        self.error: str = error or self.default_message
         self.schemes = schemes or self.default_schemes
         self.require_tld = require_tld
 
@@ -250,7 +258,7 @@ class Email(Validator):
     default_message = "Not a valid email address."
 
     def __init__(self, *, error: str | None = None):
-        self.error = error or self.default_message  # type: str
+        self.error: str = error or self.default_message
 
     def _format_error(self, value: str) -> str:
         return self.error.format(input=value)
@@ -436,7 +444,7 @@ class Equal(Validator):
 
     def __init__(self, comparable, *, error: str | None = None):
         self.comparable = comparable
-        self.error = error or self.default_message  # type: str
+        self.error: str = error or self.default_message
 
     def _repr_args(self) -> str:
         return f"comparable={self.comparable!r}"
@@ -477,7 +485,7 @@ class Regexp(Validator):
         self.regex = (
             re.compile(regex, flags) if isinstance(regex, (str, bytes)) else regex
         )
-        self.error = error or self.default_message  # type: str
+        self.error: str = error or self.default_message
 
     def _repr_args(self) -> str:
         return f"regex={self.regex!r}"
@@ -514,7 +522,7 @@ class Predicate(Validator):
 
     def __init__(self, method: str, *, error: str | None = None, **kwargs):
         self.method = method
-        self.error = error or self.default_message  # type: str
+        self.error: str = error or self.default_message
         self.kwargs = kwargs
 
     def _repr_args(self) -> str:
@@ -545,7 +553,7 @@ class NoneOf(Validator):
     def __init__(self, iterable: typing.Iterable, *, error: str | None = None):
         self.iterable = iterable
         self.values_text = ", ".join(str(each) for each in self.iterable)
-        self.error = error or self.default_message  # type: str
+        self.error: str = error or self.default_message
 
     def _repr_args(self) -> str:
         return f"iterable={self.iterable!r}"
@@ -585,7 +593,7 @@ class OneOf(Validator):
         self.choices_text = ", ".join(str(choice) for choice in self.choices)
         self.labels = labels if labels is not None else []
         self.labels_text = ", ".join(str(label) for label in self.labels)
-        self.error = error or self.default_message  # type: str
+        self.error: str = error or self.default_message
 
     def _repr_args(self) -> str:
         return f"choices={self.choices!r}, labels={self.labels!r}"
@@ -629,9 +637,9 @@ class ContainsOnly(OneOf):
     in the sequence is also in the sequence passed as ``choices``. Empty input
     is considered valid.
 
-    :param iterable choices: Same as :class:`OneOf`.
-    :param iterable labels: Same as :class:`OneOf`.
-    :param str error: Same as :class:`OneOf`.
+    :param choices: Same as :class:`OneOf`.
+    :param labels: Same as :class:`OneOf`.
+    :param error: Same as :class:`OneOf`.
 
     .. versionchanged:: 3.0.0b2
         Duplicate values are considered valid.
@@ -659,8 +667,8 @@ class ContainsNoneOf(NoneOf):
     in the sequence is a member of the sequence passed as ``iterable``. Empty input
     is considered valid.
 
-    :param iterable iterable: Same as :class:`NoneOf`.
-    :param str error: Same as :class:`NoneOf`.
+    :param iterable: Same as :class:`NoneOf`.
+    :param error: Same as :class:`NoneOf`.
 
     .. versionadded:: 3.6.0
     """

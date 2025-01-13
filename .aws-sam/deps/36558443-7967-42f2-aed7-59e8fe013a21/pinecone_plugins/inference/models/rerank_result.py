@@ -1,5 +1,5 @@
 from pinecone_plugins.inference.core.client.models import (
-    InlineResponse200 as OpenAPIRerankResult,
+    RerankResult as OpenAPIRerankResult,
 )
 
 

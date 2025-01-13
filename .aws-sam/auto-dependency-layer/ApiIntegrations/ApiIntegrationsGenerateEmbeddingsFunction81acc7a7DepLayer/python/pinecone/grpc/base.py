@@ -1,21 +1,18 @@
-import logging
 from abc import ABC, abstractmethod
-from functools import wraps
-from typing import Dict, Optional
+from typing import Optional
 
-import certifi
+import logging
 import grpc
-from grpc._channel import _InactiveRpcError, Channel
-import json
+from grpc._channel import Channel
 
-from .retry import RetryConfig
+from .channel_factory import GrpcChannelFactory
 
 from pinecone import Config
-from .utils import _generate_request_id
 from .config import GRPCClientConfig
-from pinecone.utils.constants import MAX_MSG_SIZE, REQUEST_ID, CLIENT_VERSION
-from pinecone.utils.user_agent import get_user_agent_grpc
-from pinecone.exceptions.exceptions import PineconeException
+from .grpc_runner import GrpcRunner
+from concurrent.futures import ThreadPoolExecutor
+
+from pinecone_plugin_interface import load_and_install as install_plugins
 
 _logger = logging.getLogger(__name__)
 
@@ -33,54 +30,43 @@ class GRPCIndexBase(ABC):
         config: Config,
         channel: Optional[Channel] = None,
         grpc_config: Optional[GRPCClientConfig] = None,
+        pool_threads: Optional[int] = None,
         _endpoint_override: Optional[str] = None,
     ):
-        self.name = index_name
-
         self.config = config
         self.grpc_client_config = grpc_config or GRPCClientConfig()
-        self.retry_config = self.grpc_client_config.retry_config or RetryConfig()
-
-        self.fixed_metadata = {
-            "api-key": config.api_key,
-            "service-name": index_name,
-            "client-version": CLIENT_VERSION,
-        }
-        if self.grpc_client_config.additional_metadata:
-            self.fixed_metadata.update(self.grpc_client_config.additional_metadata)
+        self.pool_threads = pool_threads
 
         self._endpoint_override = _endpoint_override
 
-        self.method_config = json.dumps(
-            {
-                "methodConfig": [
-                    {
-                        "name": [{"service": "VectorService.Upsert"}],
-                        "retryPolicy": {
-                            "maxAttempts": 5,
-                            "initialBackoff": "0.1s",
-                            "maxBackoff": "1s",
-                            "backoffMultiplier": 2,
-                            "retryableStatusCodes": ["UNAVAILABLE"],
-                        },
-                    },
-                    {
-                        "name": [{"service": "VectorService"}],
-                        "retryPolicy": {
-                            "maxAttempts": 5,
-                            "initialBackoff": "0.1s",
-                            "maxBackoff": "1s",
-                            "backoffMultiplier": 2,
-                            "retryableStatusCodes": ["UNAVAILABLE"],
-                        },
-                    },
-                ]
-            }
+        self.runner = GrpcRunner(
+            index_name=index_name, config=config, grpc_config=self.grpc_client_config
         )
-
-        options = {"grpc.primary_user_agent": get_user_agent_grpc(config)}
-        self._channel = channel or self._gen_channel(options=options)
+        self.channel_factory = GrpcChannelFactory(
+            config=self.config, grpc_client_config=self.grpc_client_config, use_asyncio=False
+        )
+        self._channel = channel or self._gen_channel()
         self.stub = self.stub_class(self._channel)
+
+        self._load_plugins()
+
+    def _load_plugins(self):
+        """@private"""
+        try:
+
+            def stub_openapi_client_builder(*args, **kwargs):
+                pass
+
+            install_plugins(self, stub_openapi_client_builder)
+        except Exception as e:
+            _logger.error(f"Error loading plugins in GRPCIndex: {e}")
+
+    @property
+    def threadpool_executor(self):
+        if self._pool is None:
+            pt = self.pool_threads or 10
+            self._pool = ThreadPoolExecutor(max_workers=pt)
+        return self._pool
 
     @property
     @abstractmethod
@@ -93,36 +79,8 @@ class GRPCIndexBase(ABC):
             grpc_host = f"{grpc_host}:443"
         return self._endpoint_override if self._endpoint_override else grpc_host
 
-    def _gen_channel(self, options=None):
-        target = self._endpoint()
-        default_options = {
-            "grpc.max_send_message_length": MAX_MSG_SIZE,
-            "grpc.max_receive_message_length": MAX_MSG_SIZE,
-            "grpc.service_config": self.method_config,
-            "grpc.enable_retries": True,
-            "grpc.per_rpc_retry_buffer_size": MAX_MSG_SIZE,
-        }
-        if self.grpc_client_config.secure:
-            default_options["grpc.ssl_target_name_override"] = target.split(":")[0]
-        if self.config.proxy_url:
-            default_options["grpc.http_proxy"] = self.config.proxy_url
-        user_provided_options = options or {}
-        _options = tuple((k, v) for k, v in {**default_options, **user_provided_options}.items())
-        _logger.debug(
-            "creating new channel with endpoint %s options %s and config %s",
-            target,
-            _options,
-            self.grpc_client_config,
-        )
-        if not self.grpc_client_config.secure:
-            channel = grpc.insecure_channel(target, options=_options)
-        else:
-            ca_certs = self.config.ssl_ca_certs if self.config.ssl_ca_certs else certifi.where()
-            root_cas = open(ca_certs, "rb").read()
-            tls = grpc.ssl_channel_credentials(root_certificates=root_cas)
-            channel = grpc.secure_channel(target, tls, options=_options)
-
-        return channel
+    def _gen_channel(self):
+        return self.channel_factory.create_channel(self._endpoint())
 
     @property
     def channel(self):
@@ -134,7 +92,9 @@ class GRPCIndexBase(ABC):
 
     def grpc_server_on(self) -> bool:
         try:
-            grpc.channel_ready_future(self._channel).result(timeout=self.grpc_client_config.conn_timeout)
+            grpc.channel_ready_future(self._channel).result(
+                timeout=self.grpc_client_config.conn_timeout
+            )
             return True
         except grpc.FutureTimeoutError:
             return False
@@ -145,44 +105,6 @@ class GRPCIndexBase(ABC):
             self._channel.close()
         except TypeError:
             pass
-
-    def _wrap_grpc_call(
-        self,
-        func,
-        request,
-        timeout=None,
-        metadata=None,
-        credentials=None,
-        wait_for_ready=None,
-        compression=None,
-    ):
-        @wraps(func)
-        def wrapped():
-            user_provided_metadata = metadata or {}
-            _metadata = tuple(
-                (k, v)
-                for k, v in {
-                    **self.fixed_metadata,
-                    **self._request_metadata(),
-                    **user_provided_metadata,
-                }.items()
-            )
-            try:
-                return func(
-                    request,
-                    timeout=timeout,
-                    metadata=_metadata,
-                    credentials=credentials,
-                    wait_for_ready=wait_for_ready,
-                    compression=compression,
-                )
-            except _InactiveRpcError as e:
-                raise PineconeException(e._state.debug_error_string) from e
-
-        return wrapped()
-
-    def _request_metadata(self) -> Dict[str, str]:
-        return {REQUEST_ID: _generate_request_id()}
 
     def __enter__(self):
         return self

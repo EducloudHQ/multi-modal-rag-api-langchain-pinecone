@@ -7,9 +7,7 @@ import copy
 
 from urllib3.connection import HTTPConnection
 
-from pinecone.core.openapi.shared.configuration import (
-    Configuration as OpenApiConfiguration,
-)
+from pinecone.core.openapi.shared.configuration import Configuration as OpenApiConfiguration
 
 TCP_KEEPINTVL = 60  # Sec
 TCP_KEEPIDLE = 300  # Sec
@@ -24,10 +22,14 @@ class OpenApiConfigFactory:
         openapi_config.host = host
         openapi_config.ssl_ca_cert = certifi.where()
         openapi_config.socket_options = cls._get_socket_options()
+        openapi_config.discard_unknown_keys = True
+
         return openapi_config
 
     @classmethod
-    def copy(cls, openapi_config: OpenApiConfiguration, api_key: str, host: str) -> OpenApiConfiguration:
+    def copy(
+        cls, openapi_config: OpenApiConfiguration, api_key: str, host: str
+    ) -> OpenApiConfiguration:
         """
         Copy a user-supplied openapi configuration and update it with the user's api key and host.
         If they have not specified other socket configuration, we will use the default values.
@@ -86,13 +88,7 @@ class OpenApiConfigFactory:
             and hasattr(socket, "TCP_KEEPCNT")
         ):
             socket_params += [(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, keep_alive_idle_sec)]
-            socket_params += [
-                (
-                    socket.IPPROTO_TCP,
-                    socket.TCP_KEEPINTVL,
-                    keep_alive_interval_sec,
-                )
-            ]
+            socket_params += [(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, keep_alive_interval_sec)]
             socket_params += [(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, keep_alive_tries)]
 
         # TCP Keep Alive Probes for Windows OS
