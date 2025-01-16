@@ -61,6 +61,8 @@ def lambda_handler(event: S3Event, context):
 
         document_table.put_item(Item=document)
 
+        #stream -> Eventbridge Pipe -> EventRule -> Appsync(subscription)
+
         message = {
             "documentId": document_id,
             "key": key,

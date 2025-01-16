@@ -37,7 +37,7 @@ def set_doc_status(user_id: str, document_id: str, status: str) -> None:
 def lambda_handler(event, context):
     logger.info(f"event is {event}")
     key = event["Key"]
-    document_id = shortuuid.uuid()
+    document_id = event["documentId"]
     s3.download_file(BUCKET, key, f"/tmp/{key}")
 
     data = json.loads(Path(f"/tmp/{key}").read_text())
@@ -77,4 +77,4 @@ def lambda_handler(event, context):
         embedding=embeddings,
     )
     vector_store.add_documents(documents=docs, async_req=False)
-    set_doc_status("rosius", document_id, "COMPLETED")
+    set_doc_status(user_id, document_id, "COMPLETED")

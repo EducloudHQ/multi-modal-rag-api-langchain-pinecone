@@ -68,6 +68,7 @@ def lambda_handler(event: SQSEvent, context):
             logger.info(f"Media file detected: {extension}, starting Step Function.")
             input_json = {
                 "jobName": scalar_types_utils.make_id(),
+                "documentId":document_id,
                 "bucketOutputKey": f"{scalar_types_utils.make_id()}.json",
                 "mediaFileUri": s3_uri,
             }

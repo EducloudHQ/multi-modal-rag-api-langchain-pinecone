@@ -46,7 +46,8 @@
       "Next": "Lambda Invoke",
       "Output": {
         "Bucket": "${BucketName}",
-        "Key": "{% $states.context.Execution.Input.bucketOutputKey %}"
+        "Key": "{% $states.context.Execution.Input.bucketOutputKey %}",
+        "documentId":"{% $states.context.Execution.Input.documentId %}"
       }
     },
     "Lambda Invoke": {

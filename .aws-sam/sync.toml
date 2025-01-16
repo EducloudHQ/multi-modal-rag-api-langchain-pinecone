@@ -2,23 +2,23 @@
 
 [sync_state]
 dependency_layer = true
-latest_infra_sync_time = "2025-01-13T10:54:25.318278"
+latest_infra_sync_time = "2025-01-16T16:51:23.219259"
 
 [resource_sync_states."AutoDependencyLayerParentSyncFlow:ApiIntegrations-UploadTriggerFunction"]
-hash = "853eb643102c00a3e4a3bc91e0cd8469790b08da9a56e603cafe08ced3f241d3"
-sync_time = "2025-01-11T20:10:34.334549"
+hash = "cd5501d1485b5fe8e20b1db1671fbb48ba60de009d276998a99c184b56a4f08a"
+sync_time = "2025-01-16T13:18:34.741123"
 
 [resource_sync_states."AutoDependencyLayerParentSyncFlow:ApiIntegrations-NoteLambdaFunction"]
-hash = "43884b8ed4856d1768a8eff814dd3162bb8883368e6ae80dcac864c3c6d3023f"
-sync_time = "2025-01-13T00:19:44.161129"
+hash = "3b9bdfa2705f1023294e9e6afc49fcdfcca27228f0a979ceb2141616617b9684"
+sync_time = "2025-01-16T17:00:22.924975"
 
 [resource_sync_states."AutoDependencyLayerParentSyncFlow:ApiIntegrations-GenerateEmbeddingsFromTextFunction"]
-hash = "a841e240d23a2b6796b462ae9db17f73a24f75f653a28b0edbf360bca8b3e253"
-sync_time = "2025-01-13T00:19:44.328958"
+hash = "979b54c4eda17e72c57e1f489179bec2fddf4600347eceedb859782b2cfffd14"
+sync_time = "2025-01-16T17:15:00.398831"
 
 [resource_sync_states."AutoDependencyLayerParentSyncFlow:ApiIntegrations-GenerateEmbeddingsFunction"]
-hash = "a841e240d23a2b6796b462ae9db17f73a24f75f653a28b0edbf360bca8b3e253"
-sync_time = "2025-01-13T00:19:52.160496"
+hash = "979b54c4eda17e72c57e1f489179bec2fddf4600347eceedb859782b2cfffd14"
+sync_time = "2025-01-16T17:14:52.682588"
 
 [resource_sync_states."AutoDependencyLayerSyncFlow:ApiIntegrationsNoteLambdaFunction67402975DepLayer"]
 hash = "68330d5c94ab7be27ce25a6786f21d8178e194ed821665ef98ea39eeb8e2fa22"
